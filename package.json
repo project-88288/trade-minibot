@@ -1,0 +1,14 @@
+{
+  "name": "ftrade-bot",
+  "version": "1.0.0",
+  "description": "Live trade bot — fetches optimal params from ftrade-optimizer on startup, then trades on Binance",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "backtest": "node bot.js --backtest"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "ws": "^8.18.0"
+  }
+}
