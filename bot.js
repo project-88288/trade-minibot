@@ -11,7 +11,7 @@ const { fetchBestParams }     = require('./src/optimizerClient');
 const { saveParamsToEnv }     = require('./src/paramStore');
 
 const BACKTEST_MODE     = process.argv.includes('--backtest');
-const CANDLE_LIMIT      = 500;
+const CANDLE_LIMIT      = 1500;
 const PARAM_REFRESH_MS  = 24 * 60 * 60 * 1000; // 24 hours
 
 // ── Load strategy params ──────────────────────────────────────────────────────
