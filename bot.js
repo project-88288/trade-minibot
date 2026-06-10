@@ -24,7 +24,7 @@ async function loadParams() {
     console.log(`[OPTIMIZER] Fetching params from ${config.optimizerUrl} …`);
     const best = await fetchBestParams(
       config.optimizerUrl, config.optimizerKey,
-      'binance', config.symbol, config.interval,
+      config.exchange, config.symbol, config.interval,
     );
     const params = { ...config, ...best };
     console.log(
@@ -80,7 +80,7 @@ async function refreshParams(params, trader) {
     console.log('[OPTIMIZER] 24h refresh — fetching new params …');
     const best = await fetchBestParams(
       config.optimizerUrl, config.optimizerKey,
-      'binance', config.symbol, config.interval,
+      config.exchange, config.symbol, config.interval,
     );
     Object.assign(params, best);
     trader.slPct       = params.stopLossPercent;

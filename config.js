@@ -13,6 +13,7 @@ module.exports = {
 
   optimizerUrl: process.env.OPTIMIZER_URL || 'http://localhost:4500',
   optimizerKey: process.env.OPTIMIZER_KEY || '',
+  exchange:     process.env.EXCHANGE       || 'binance',
 
   // Strategy defaults — overridden by optimizer params on startup
   interval:          process.env.INTERVAL            || '5m',
