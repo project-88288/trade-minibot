@@ -2,7 +2,7 @@
 # Stop and unregister the ftrade-bot macOS LaunchAgent.
 # Does NOT delete the bot files or .env.
 #
-# Usage:  ./remove-service.sh
+# Usage:  ./remove-service-mc.sh
 
 set -euo pipefail
 

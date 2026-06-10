@@ -8,11 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run live trading bot
 node bot.js
 
-# Run backtest against last 500 candles (no API credentials needed)
+# Run backtest against last 1500 candles (no API credentials needed)
 node bot.js --backtest
 
 # Install as macOS LaunchAgent (auto-restart on crash, manual start)
-./setup-service.sh
+./setup-service-mc.sh
 
 # Service lifecycle
 launchctl start com.ftrade-bot

@@ -3,7 +3,7 @@
 # The service restarts automatically on crash (KeepAlive) but does NOT
 # auto-start on login — run "launchctl start com.ftrade-bot" when ready.
 #
-# Usage:  ./setup-service.sh
+# Usage:  ./setup-service-mc.sh
 #
 # Prerequisites:
 #   - Node.js 18+ (brew install node  or  nvm)
@@ -13,7 +13,7 @@
 #   Start  :  launchctl start com.ftrade-bot
 #   Stop   :  launchctl stop  com.ftrade-bot
 #   Logs   :  tail -f ~/Library/Logs/ftrade-bot/out.log
-#   Remove :  ./remove-service.sh
+#   Remove :  ./remove-service-mc.sh
 
 set -euo pipefail
 
@@ -122,4 +122,4 @@ echo "    Stop    :  launchctl stop   $SERVICE_LABEL"
 echo "    Status  :  launchctl list | grep $SERVICE_LABEL"
 echo "    Stdout  :  tail -f $LOG_DIR/out.log"
 echo "    Stderr  :  tail -f $LOG_DIR/err.log"
-echo "    Remove  :  ./remove-service.sh"
+echo "    Remove  :  ./remove-service-mc.sh"
