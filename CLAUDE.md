@@ -31,7 +31,11 @@ tail -f ~/Library/Logs/ftrade-bot/err.log
 **Startup flow** (`bot.js`):
 1. `loadParams()` — calls `optimizerClient.fetchBestParams()` → merges result into `config` → writes back to `.env` via `paramStore.saveParamsToEnv()` as a fallback backup
 2. `BinanceClient` is constructed (spot or futures depending on `FUTURES_MODE`)
-3. `liveTrade()` — loads 500 historical candles, creates a `Trader`, subscribes to the WebSocket kline stream, and processes every candle tick
+3. `liveTrade()` — loads 1500 historical candles via `loadCandles()` (spot is clamped to 1000 by the Binance endpoint), creates a `Trader`, subscribes to the WebSocket kline stream, and processes every candle tick
+
+**Candle sync** (`src/candleSync.js`):
+- `loadCandles()` in `bot.js` (used for both backtest and live startup) first tries `fetchCandlesFromOptimizer()`, which acts as a peer to the optimizer's P2P candle store — pulling the newest `/candles/manifest` entry matching this exchange/symbol/interval via `/candles/file`, the same snapshot format optimizer peers exchange with each other
+- Falls back to a direct `exchange.fetchCandles()` REST call if `OPTIMIZER_KEY` is unset, the optimizer has no matching snapshot, or the request fails
 
 **Signal logic** (`src/strategy.js`):
 - EMA crossover (fast/slow) confirmed by RSI threshold — buy when fast crosses above slow and RSI is below threshold; sell when fast crosses below slow and RSI is above `100 - threshold`

@@ -8,6 +8,7 @@ const { Trader }              = require('./src/trader');
 const { getLatestSignal }     = require('./src/strategy');
 const { runBacktest }         = require('./src/backtest');
 const { fetchBestParams }     = require('./src/optimizerClient');
+const { fetchCandlesFromOptimizer } = require('./src/candleSync');
 const { saveParamsToEnv }     = require('./src/paramStore');
 
 const BACKTEST_MODE     = process.argv.includes('--backtest');
@@ -42,13 +43,36 @@ async function loadParams() {
   }
 }
 
+// ── Candle loading ────────────────────────────────────────────────────────────
+// Pulls the newest candle snapshot the optimizer has for this exchange/symbol
+// /interval (peer-to-peer style, see src/candleSync.js), falling back to a
+// direct exchange fetch if the optimizer has none or is unreachable.
+async function loadCandles(exchange, interval) {
+  if (config.optimizerKey) {
+    try {
+      const synced = await fetchCandlesFromOptimizer(
+        config.optimizerUrl, config.optimizerKey,
+        config.exchange, config.symbol, interval,
+      );
+      if (synced) {
+        console.log(`[CANDLES] Synced ${synced.length} candles from optimizer`);
+        return synced.slice(-CANDLE_LIMIT);
+      }
+      console.log(`[CANDLES] Optimizer has no snapshot for ${config.exchange}/${config.symbol}/${interval} — falling back to ${config.exchange} fetch`);
+    } catch (e) {
+      console.warn(`[CANDLES] Optimizer sync failed (${e.message}) — falling back to ${config.exchange} fetch`);
+    }
+  }
+  return exchange.fetchCandles(config.symbol, interval, CANDLE_LIMIT);
+}
+
 // ── Backtest mode ─────────────────────────────────────────────────────────────
 async function backtest(params, exchange) {
   console.log(`\n[BACKTEST] ${config.symbol} ${params.interval}  last ${CANDLE_LIMIT} candles`);
   console.log(`  fast=${params.fastMA} slow=${params.slowMA} rsiP=${params.rsiPeriod} rsiTh=${params.rsiThreshold}`);
   console.log(`  sl=${params.stopLossPercent}% tp=${params.takeProfitPercent}% trail=${params.trailingPercent}% fee=${params.tradeFee}%\n`);
 
-  const candles = await exchange.fetchCandles(config.symbol, params.interval, CANDLE_LIMIT);
+  const candles = await loadCandles(exchange, params.interval);
   const { trades, summary: s } = runBacktest(candles, params);
 
   console.log('── Summary ────────────────────────────────────────');
@@ -101,7 +125,7 @@ async function refreshParams(params, trader) {
 async function liveTrade(params, exchange) {
   console.log(`[BOT] Live trading ${config.symbol} ${params.interval}  futures=${config.futuresMode}`);
 
-  let candles = await exchange.fetchCandles(config.symbol, params.interval, CANDLE_LIMIT);
+  let candles = await loadCandles(exchange, params.interval);
   console.log(`[BOT] Loaded ${candles.length} historical candles`);
 
   const trader = new Trader({
@@ -117,7 +141,7 @@ async function liveTrade(params, exchange) {
   setInterval(() => refreshParams(params, trader), PARAM_REFRESH_MS);
   console.log(`[OPTIMIZER] Param auto-refresh scheduled every 24h`);
 
-  let lastSignalIdx = -1;
+  let lastSignalTime = 0;
 
   exchange.subscribeKlines(config.symbol, params.interval, async (candle) => {
     // Check TP/SL on every price tick
@@ -136,10 +160,10 @@ async function liveTrade(params, exchange) {
       if (candles.length > CANDLE_LIMIT) candles = candles.slice(-CANDLE_LIMIT);
     }
 
-    const signal = getLatestSignal(candles, params, lastSignalIdx);
+    const signal = getLatestSignal(candles, params, lastSignalTime);
     if (!signal) return;
 
-    lastSignalIdx = signal.candleIdx;
+    lastSignalTime = signal.time;
     console.log(
       `[SIGNAL] ${signal.type.toUpperCase().padEnd(4)} @ ${signal.price}` +
       `  RSI=${signal.rsiVal.toFixed(1)}  ${new Date(signal.time * 1000).toISOString().slice(0, 16)}`

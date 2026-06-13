@@ -76,12 +76,13 @@ function computeSignals(candles, params) {
 }
 
 // Returns the signal on the most recent closed candle, or null if none.
-// `afterIdx` lets callers skip already-processed signals.
-function getLatestSignal(candles, params, afterIdx = -1) {
+// `afterTime` lets callers skip already-processed signals; candle time is
+// stable when the rolling buffer slides, unlike the array index.
+function getLatestSignal(candles, params, afterTime = 0) {
   const signals = computeSignals(candles, params);
   if (!signals.length) return null;
   const last = signals[signals.length - 1];
-  if (last.candleIdx <= afterIdx) return null;
+  if (last.time <= afterTime) return null;
   if (last.candleIdx !== candles.length - 1) return null;
   return last;
 }
