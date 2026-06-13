@@ -41,7 +41,8 @@ tail -f ~/Library/Logs/ftrade-bot-<folder-name>/err.log
 
 **Candle history** (`src/historyStore.js`, `src/candleSync.js`):
 - `loadCandles()` in `bot.js` (used for both backtest and live startup) follows ftrade-bot-lenovo's historyManager pattern: local on-disk history (`data/candles_<exchange>_<symbol>_<interval>.json`) is the base, the gap since its last candle is fetched from the exchange via `fetchCandlesSince()`, the two are merged/deduped by time, and the result is persisted back to disk
-- On first run (no local history), the optimizer's P2P candle snapshot store is tried first via `fetchCandlesFromOptimizer()` (`/candles/manifest` + `/candles/file`) to seed the base before falling back to a full `exchange.fetchCandles()` REST fetch
+- On every load (not just first run), the optimizer's P2P candle snapshot store is pulled via `fetchCandlesFromOptimizer()` (`/candles/manifest` + `/candles/file`) and merged into the base — this is the same candle data the optimizer used to pick the current params, so the gate backtest below runs over a matching dataset
+- The rolling buffer size (`candleBufferLimit`) is widened to `max(CANDLE_LIMIT, optimizer history length)` so this full history isn't immediately truncated back down to `CANDLE_LIMIT` (1500)
 - During live trading, every newly closed candle appended to the rolling buffer is persisted via `historyStore.save()`, so the next restart resumes from there with only a small gap to fetch
 
 **Signal logic** (`src/strategy.js`):
@@ -66,5 +67,5 @@ tail -f ~/Library/Logs/ftrade-bot-<folder-name>/err.log
 All settings live in `.env` (see `.env.example`). The bot overwrites the strategy-param keys in `.env` after each successful optimizer fetch — this is intentional so params survive a restart when the optimizer is temporarily down. `OPTIMIZER_KEY` is required to contact the optimizer; if unset the bot runs on raw `.env` params.
 
 **Backtest trade gate** (`bot.js` — `checkTradeGate()`):
-- On startup, and after every param reload (24h optimizer refresh), the bot runs a backtest over the currently loaded candles with the active params (optimizer-supplied or `.env` fallback) and compares the total PnL% to `MIN_ALLOW_PERCENT`
+- On startup, and after every param reload (24h optimizer refresh), the bot runs a backtest over the currently loaded candles (the optimizer's full history merged with any local/exchange gap, see **Candle history**) with the active params (optimizer-supplied or `.env` fallback) and compares the total PnL% to `MIN_ALLOW_PERCENT`
 - If the backtest result is below `MIN_ALLOW_PERCENT`, new entries are skipped (logged as `[GATE] ... ignored`) but the bot keeps running — it still monitors and exits any open position normally. The gate is only re-evaluated on the next reload/restart

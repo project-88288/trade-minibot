@@ -17,6 +17,12 @@ const BACKTEST_MODE     = process.argv.includes('--backtest');
 const CANDLE_LIMIT      = 1500;
 const PARAM_REFRESH_MS  = 24 * 60 * 60 * 1000; // 24 hours
 
+// Rolling candle buffer size. Starts at CANDLE_LIMIT but is widened by
+// loadCandles() to match the optimizer's full history snapshot, so the
+// trade gate's backtest runs over the same data the optimizer used to pick
+// the current params.
+let candleBufferLimit = CANDLE_LIMIT;
+
 // ── Load strategy params ──────────────────────────────────────────────────────
 async function loadParams() {
   if (!config.optimizerKey) {
@@ -70,20 +76,30 @@ async function fetchCandlesSince(exchange, interval, sinceMs) {
 async function loadCandles(exchange, interval) {
   let base = historyStore.load(config.exchange, config.symbol, interval);
 
-  if (!base.length && config.optimizerKey) {
+  // Always pull the optimizer's full history snapshot (the same candles it
+  // used to pick the current params) and merge it into the base, so the
+  // gate backtest below matches the optimizer's result.
+  if (config.optimizerKey) {
     try {
       const synced = await fetchCandlesFromOptimizer(
         config.optimizerUrl, config.optimizerKey,
         config.exchange, config.symbol, interval,
       );
-      if (synced) {
-        console.log(`[CANDLES] Seeded ${synced.length} candles from optimizer`);
-        base = synced;
+      if (synced && synced.length) {
+        console.log(`[CANDLES] Pulled ${synced.length} candles of full history from optimizer`);
+        const map = new Map();
+        for (const c of base)   map.set(c.time, c);
+        for (const c of synced) map.set(c.time, c);
+        base = [...map.values()].sort((a, b) => a.time - b.time);
       }
     } catch (e) {
-      console.warn(`[CANDLES] Optimizer sync failed (${e.message})`);
+      console.warn(`[CANDLES] Optimizer history sync failed (${e.message})`);
     }
   }
+
+  // Widen the rolling buffer to fit the optimizer's full history so it
+  // isn't immediately truncated back down to CANDLE_LIMIT below.
+  candleBufferLimit = Math.max(CANDLE_LIMIT, base.length);
 
   const fetched = base.length
     ? await fetchCandlesSince(exchange, interval, base[base.length - 1].time * 1000 + 1)
@@ -92,10 +108,10 @@ async function loadCandles(exchange, interval) {
   const map = new Map();
   for (const c of base)    map.set(c.time, c);
   for (const c of fetched) map.set(c.time, c);
-  const merged = [...map.values()].sort((a, b) => a.time - b.time).slice(-CANDLE_LIMIT);
+  const merged = [...map.values()].sort((a, b) => a.time - b.time).slice(-candleBufferLimit);
 
   historyStore.save(config.exchange, config.symbol, interval, merged);
-  console.log(`[CANDLES] ${base.length} local + ${fetched.length} fetched → ${merged.length} total`);
+  console.log(`[CANDLES] ${base.length} local+optimizer + ${fetched.length} fetched → ${merged.length} total`);
   return merged;
 }
 
@@ -243,7 +259,7 @@ async function liveTrade(params, exchange) {
       candles[candles.length - 1] = candle;
     } else {
       candles.push(candle);
-      if (candles.length > CANDLE_LIMIT) candles = candles.slice(-CANDLE_LIMIT);
+      if (candles.length > candleBufferLimit) candles = candles.slice(-candleBufferLimit);
     }
     historyStore.save(config.exchange, config.symbol, params.interval, candles);
 
