@@ -3,8 +3,8 @@
 # The service restarts automatically (KeepAlive: true — see bot.js's
 # midnight restart) but does NOT auto-start on login — run
 # "launchctl start <label>" when ready. The label is derived from this
-# folder's name plus the EXCHANGE/SYMBOL/OPTIMIZER_URL in .env (see
-# service-label.sh), so multiple checkouts can run as separate services.
+# folder's name plus the OPTIMIZER_URL in .env (see service-label.sh), so
+# multiple checkouts can run as separate services.
 #
 # Usage:  ./setup-service-mc.sh
 #

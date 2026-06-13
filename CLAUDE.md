@@ -14,8 +14,8 @@ node bot.js --backtest
 # Install as macOS LaunchAgent (auto-restart, manual start)
 ./setup-service-mc.sh
 
-# Service lifecycle — label is derived from folder/exchange/symbol/optimizer
-# URL (see service-label.sh); setup-service-mc.sh prints the exact label
+# Service lifecycle — label is derived from folder/optimizer URL (see
+# service-label.sh); setup-service-mc.sh prints the exact label
 source ./service-label.sh
 launchctl start "$SERVICE_LABEL"
 launchctl stop  "$SERVICE_LABEL"
