@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Check whether ftrade-bot LaunchAgent is running or stopped.
 
-SERVICE_LABEL="com.ftrade-bot"
-LOG_DIR="$HOME/Library/Logs/ftrade-bot"
+source "$(cd "$(dirname "$0")" && pwd)/service-label.sh"
 
 # ── launchctl row ─────────────────────────────────────────────────────────────
 ROW=$(launchctl list 2>/dev/null | grep "$SERVICE_LABEL" || true)

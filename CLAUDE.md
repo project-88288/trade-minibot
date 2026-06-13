@@ -11,17 +11,19 @@ node bot.js
 # Run backtest against last 1500 candles (no API credentials needed)
 node bot.js --backtest
 
-# Install as macOS LaunchAgent (auto-restart on crash, manual start)
+# Install as macOS LaunchAgent (auto-restart, manual start)
 ./setup-service-mc.sh
 
-# Service lifecycle
-launchctl start com.ftrade-bot
-launchctl stop  com.ftrade-bot
+# Service lifecycle — label is derived from folder/exchange/symbol/optimizer
+# URL (see service-label.sh); setup-service-mc.sh prints the exact label
+source ./service-label.sh
+launchctl start "$SERVICE_LABEL"
+launchctl stop  "$SERVICE_LABEL"
 ./status.sh
 
 # Logs
-tail -f ~/Library/Logs/ftrade-bot/out.log
-tail -f ~/Library/Logs/ftrade-bot/err.log
+tail -f ~/Library/Logs/ftrade-bot-<folder-name>/out.log
+tail -f ~/Library/Logs/ftrade-bot-<folder-name>/err.log
 ```
 
 ## Architecture

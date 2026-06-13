@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Install ftrade-bot as a macOS LaunchAgent.
-# The service restarts automatically on crash (KeepAlive) but does NOT
-# auto-start on login — run "launchctl start com.ftrade-bot" when ready.
+# The service restarts automatically (KeepAlive: true — see bot.js's
+# midnight restart) but does NOT auto-start on login — run
+# "launchctl start <label>" when ready. The label is derived from this
+# folder's name plus the EXCHANGE/SYMBOL/OPTIMIZER_URL in .env (see
+# service-label.sh), so multiple checkouts can run as separate services.
 #
 # Usage:  ./setup-service-mc.sh
 #
@@ -9,18 +12,13 @@
 #   - Node.js 18+ (brew install node  or  nvm)
 #   - .env configured (see .env.example)
 #
-# After setup:
-#   Start  :  launchctl start com.ftrade-bot
-#   Stop   :  launchctl stop  com.ftrade-bot
-#   Logs   :  tail -f ~/Library/Logs/ftrade-bot/out.log
-#   Remove :  ./remove-service-mc.sh
+# After setup, this script prints the exact start/stop/logs commands for
+# this instance's label.
 
 set -euo pipefail
 
-SERVICE_LABEL="com.ftrade-bot"
-PLIST_PATH="$HOME/Library/LaunchAgents/${SERVICE_LABEL}.plist"
-LOG_DIR="$HOME/Library/Logs/ftrade-bot"
-BOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$(cd "$(dirname "$0")" && pwd)/service-label.sh"
+echo "==> Service label: $SERVICE_LABEL"
 
 # ── Node.js check ─────────────────────────────────────────────────────────────
 NODE_BIN=$(command -v node 2>/dev/null || echo "")

@@ -6,8 +6,7 @@
 
 set -euo pipefail
 
-SERVICE_LABEL="com.ftrade-bot"
-PLIST_PATH="$HOME/Library/LaunchAgents/${SERVICE_LABEL}.plist"
+source "$(cd "$(dirname "$0")" && pwd)/service-label.sh"
 
 echo "==> Removing $SERVICE_LABEL"
 
