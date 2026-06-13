@@ -12,6 +12,14 @@ const INTERVAL_MIN = {
   '1d': 1440, '1w': 10080,
 };
 
+// Rounds `value` to the nearest multiple of `tick`, formatted to the same
+// number of decimals as `tick` (KuCoin rejects prices with extra precision).
+function _roundToTick(value, tick) {
+  const decimals = (tick.toString().split('.')[1] || '').length;
+  const rounded  = Math.round(value / tick) * tick;
+  return rounded.toFixed(decimals);
+}
+
 // Map a Binance-style symbol (e.g. BTCUSDT) to a KuCoin Futures perpetual
 // symbol (e.g. XBTUSDTM). BTC → XBT, all USDT-margined perps get an M suffix.
 function toKuCoinSymbol(binanceSymbol) {
@@ -182,6 +190,52 @@ class KuCoinClient {
     } catch (_) {}
 
     return { avgPrice, executedQty: filledConts * info.multiplier };
+  }
+
+  // Places exchange-native stop-market orders (mark-price triggered) that
+  // close the whole position when triggered.
+  async placeFuturesStopOrders(symbol, { side, takeProfitPrice, stopLossPrice }) {
+    const ks   = this._ks(symbol);
+    const info = await this._contractInfo(ks);
+    const closeSide = side === 'long' ? 'sell' : 'buy';
+    const orders = [];
+
+    if (takeProfitPrice) {
+      orders.push(this._request('POST', '/api/v1/orders', {
+        clientOid:     `ftrade_tp_${Date.now()}`,
+        symbol:        ks,
+        side:          closeSide,
+        type:          'market',
+        stop:          side === 'long' ? 'up' : 'down',
+        stopPriceType: 'MP',
+        stopPrice:     _roundToTick(takeProfitPrice, info.tickSize),
+        reduceOnly:    true,
+        closeOrder:    true,
+      }, true));
+    }
+    if (stopLossPrice) {
+      orders.push(this._request('POST', '/api/v1/orders', {
+        clientOid:     `ftrade_sl_${Date.now()}`,
+        symbol:        ks,
+        side:          closeSide,
+        type:          'market',
+        stop:          side === 'long' ? 'down' : 'up',
+        stopPriceType: 'MP',
+        stopPrice:     _roundToTick(stopLossPrice, info.tickSize),
+        reduceOnly:    true,
+        closeOrder:    true,
+      }, true));
+    }
+    await Promise.all(orders);
+  }
+
+  // Cancels resting stop orders and any open orders for the symbol.
+  async cancelAllOrders(symbol) {
+    const ks = this._ks(symbol);
+    await Promise.allSettled([
+      this._request('DELETE', '/api/v1/stopOrders', { symbol: ks }, true),
+      this._request('DELETE', '/api/v1/orders', { symbol: ks }, true),
+    ]);
   }
 
   // Subscribes to kline stream. `onCandle` receives each update including

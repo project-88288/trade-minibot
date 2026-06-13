@@ -12,6 +12,7 @@ class BinanceClient {
     this.futures   = futuresMode;
     this.restBase  = futuresMode ? 'https://fapi.binance.com' : 'https://api.binance.com';
     this.wsBase    = futuresMode ? 'wss://fstream.binance.com' : 'wss://stream.binance.com:9443';
+    this._filterCache = {};
   }
 
   _sign(params) {
@@ -23,10 +24,10 @@ class BinanceClient {
   _request(method, path, params = {}, signed = false) {
     return new Promise((resolve, reject) => {
       const qs  = signed ? this._sign(params) : new URLSearchParams(params).toString();
-      const url = method === 'GET'
+      const url = (method === 'GET' || method === 'DELETE')
         ? `${this.restBase}${path}${qs ? '?' + qs : ''}`
         : `${this.restBase}${path}`;
-      const body = method !== 'GET' ? qs : undefined;
+      const body = (method !== 'GET' && method !== 'DELETE') ? qs : undefined;
 
       const opts = {
         method,
@@ -106,6 +107,66 @@ class BinanceClient {
     return { avgPrice: _avgFillPrice(order) };
   }
 
+  // Returns { tickSize } for the symbol's PRICE_FILTER, cached.
+  async _getTickSize(symbol) {
+    if (this._filterCache[symbol]) return this._filterCache[symbol];
+    const path = this.futures ? '/fapi/v1/exchangeInfo' : '/api/v3/exchangeInfo';
+    const info = await this._request('GET', path, this.futures ? {} : { symbol });
+    const symInfo = info.symbols.find(s => s.symbol === symbol);
+    const priceFilter = symInfo.filters.find(f => f.filterType === 'PRICE_FILTER');
+    const tickSize = parseFloat(priceFilter.tickSize);
+    this._filterCache[symbol] = { tickSize };
+    return this._filterCache[symbol];
+  }
+
+  // Places exchange-native TAKE_PROFIT_MARKET / STOP_MARKET reduce-only
+  // orders that close the whole position when triggered (futures only).
+  async placeFuturesStopOrders(symbol, { side, takeProfitPrice, stopLossPrice }) {
+    if (!this.futures) return;
+    const { tickSize } = await this._getTickSize(symbol);
+    const closeSide = side === 'long' ? 'SELL' : 'BUY';
+    const orders = [];
+    if (takeProfitPrice) {
+      orders.push(this._request('POST', '/fapi/v1/order', {
+        symbol, side: closeSide, type: 'TAKE_PROFIT_MARKET',
+        stopPrice: _roundToTick(takeProfitPrice, tickSize),
+        closePosition: 'true', workingType: 'MARK_PRICE',
+      }, true));
+    }
+    if (stopLossPrice) {
+      orders.push(this._request('POST', '/fapi/v1/order', {
+        symbol, side: closeSide, type: 'STOP_MARKET',
+        stopPrice: _roundToTick(stopLossPrice, tickSize),
+        closePosition: 'true', workingType: 'MARK_PRICE',
+      }, true));
+    }
+    await Promise.all(orders);
+  }
+
+  // Places a spot OCO (take-profit limit-maker + stop-loss-limit) order
+  // covering `quantity` base units. Returns the OCO's orderListId.
+  async placeOco(symbol, quantity, takeProfitPrice, stopLossPrice) {
+    if (this.futures) return null;
+    const { tickSize } = await this._getTickSize(symbol);
+    const tp = _roundToTick(takeProfitPrice, tickSize);
+    const sl = _roundToTick(stopLossPrice, tickSize);
+    const slLimit = _roundToTick(sl * 0.999, tickSize);
+    const order = await this._request('POST', '/api/v3/order/oco', {
+      symbol, side: 'SELL', quantity,
+      price: tp,
+      stopPrice: sl,
+      stopLimitPrice: slLimit,
+      stopLimitTimeInForce: 'GTC',
+    }, true);
+    return order.orderListId;
+  }
+
+  // Cancels all open orders for a symbol (futures stop orders or spot OCO).
+  async cancelAllOrders(symbol) {
+    const path = this.futures ? '/fapi/v1/allOpenOrders' : '/api/v3/openOrders';
+    await this._request('DELETE', path, { symbol }, true);
+  }
+
   // Subscribes to kline stream. `onCandle` receives each update including
   // in-progress candles; `candle.closed === true` marks the final update.
   subscribeKlines(symbol, interval, onCandle) {
@@ -136,6 +197,14 @@ class BinanceClient {
 
     connect();
   }
+}
+
+// Rounds `value` to the nearest multiple of `tick`, formatted to the same
+// number of decimals as `tick` (Binance rejects prices with extra precision).
+function _roundToTick(value, tick) {
+  const decimals = (tick.toString().split('.')[1] || '').length;
+  const rounded  = Math.round(value / tick) * tick;
+  return rounded.toFixed(decimals);
 }
 
 function _avgFillPrice(order) {

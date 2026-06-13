@@ -16,6 +16,8 @@ class Trader {
     this.futures      = futuresMode;
     this.position     = null; // { side:'long'|'short', entryPrice, qty }
     this.trailBest    = null;
+    this.syncedSl     = null;
+    this.syncedTp     = null;
     this.stats        = { trades: 0, wins: 0, losses: 0, totalPnl: 0 };
   }
 
@@ -40,9 +42,45 @@ class Trader {
       const { avgPrice, executedQty } = await this.exchange.enterMarket(this.symbol, orderSide, quoteAmt);
       this.position  = { side, entryPrice: avgPrice, qty: executedQty };
       this.trailBest = null;
+      this.syncedSl  = null;
+      this.syncedTp  = null;
       console.log(`[TRADE] ENTER ${side.toUpperCase()} @ ${avgPrice}  qty=${executedQty}`);
+
+      const isLong = side === 'long';
+      const tp = avgPrice * (isLong ? 1 + this.tpPct / 100 : 1 - this.tpPct / 100);
+      const sl = avgPrice * (isLong ? 1 - this.slPct / 100 : 1 + this.slPct / 100);
+      await this._syncProtectiveOrders(tp, sl);
     } catch (e) {
       console.error(`[TRADE] enter failed: ${e.message}`);
+    }
+  }
+
+  // Places exchange-native TP/SL (futures stop orders or a spot OCO) so the
+  // position stays protected even if this bot process goes down. Re-syncing
+  // cancels any resting protective orders before placing the new ones —
+  // called on entry and again whenever the trailing stop moves.
+  async _syncProtectiveOrders(takeProfitPrice, stopLossPrice) {
+    if (!this.position) return;
+    const hasFutures = this.futures && typeof this.exchange.placeFuturesStopOrders === 'function';
+    const hasOco     = !this.futures && typeof this.exchange.placeOco === 'function';
+    if (!hasFutures && !hasOco) return;
+
+    try {
+      if (typeof this.exchange.cancelAllOrders === 'function') {
+        await this.exchange.cancelAllOrders(this.symbol);
+      }
+      if (hasFutures) {
+        await this.exchange.placeFuturesStopOrders(this.symbol, {
+          side: this.position.side, takeProfitPrice, stopLossPrice,
+        });
+      } else {
+        await this.exchange.placeOco(this.symbol, this.position.qty, takeProfitPrice, stopLossPrice);
+      }
+      this.syncedTp = takeProfitPrice;
+      this.syncedSl = stopLossPrice;
+      console.log(`[TRADE] protective orders synced — TP=${takeProfitPrice}  SL=${stopLossPrice}`);
+    } catch (e) {
+      console.error(`[TRADE] protective order sync failed: ${e.message}`);
     }
   }
 
@@ -51,6 +89,9 @@ class Trader {
     const { side, entryPrice, qty } = this.position;
     const exitSide = side === 'long' ? 'SELL' : 'BUY';
     try {
+      if (typeof this.exchange.cancelAllOrders === 'function') {
+        try { await this.exchange.cancelAllOrders(this.symbol); } catch (_) {}
+      }
       const { avgPrice } = await this.exchange.exitMarket(this.symbol, exitSide, qty);
       const fee2 = 2 * this.feePct;
       const pnl = side === 'long'
@@ -69,6 +110,8 @@ class Trader {
     }
     this.position  = null;
     this.trailBest = null;
+    this.syncedSl  = null;
+    this.syncedTp  = null;
   }
 
   // Called on every price update (closed or in-progress candle) to trigger
@@ -92,6 +135,11 @@ class Trader {
         ? this.trailBest * (1 - this.trailingPct / 100)
         : this.trailBest * (1 + this.trailingPct / 100);
       if (isLong ? tsl > entryPrice : tsl < entryPrice) effectiveSl = tsl;
+    }
+
+    // Keep the exchange-side protective stop in sync as the trailing stop moves.
+    if (effectiveSl !== sl && effectiveSl !== this.syncedSl) {
+      await this._syncProtectiveOrders(tp, effectiveSl);
     }
 
     if (isLong) {
