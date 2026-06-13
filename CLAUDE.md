@@ -46,6 +46,8 @@ tail -f ~/Library/Logs/ftrade-bot/err.log
 - Single open position at a time; supports `long` and `short` (futures only)
 - Checks TP/SL on every candle tick (including in-progress candles); trailing stop activates once price moves in the favorable direction beyond entry
 - `checkStops()` logic must stay in sync with `backtest.js` `runSeries()` so live behavior matches backtest results
+- Trade sizing (`_tradeSize()`) mirrors ftrade-bot-lenovo's `orderManager`: if `TRADE_PERCENT` > 0, spend that percent of the live exchange balance (`exchange.getBalance()`); otherwise spend the fixed `TRADE_CAPITAL`
+- `exit()` subtracts a round-trip fee (`2 * TRADE_FEE`, i.e. `fee2`) from the realized PnL%, matching `backtest.js`'s `fee2 = 2 * feePct` so live PnL and backtest PnL are computed the same way
 
 **Backtest** (`src/backtest.js`):
 - Runs the same signal computation and per-candle TP/SL simulation as the optimizer

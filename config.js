@@ -10,6 +10,7 @@ module.exports = {
   futuresMode: process.env.FUTURES_MODE === 'true',
 
   tradeCapital: parseFloat(process.env.TRADE_CAPITAL || '100'),
+  tradePercent: parseFloat(process.env.TRADE_PERCENT || '0'),
 
   optimizerUrl: process.env.OPTIMIZER_URL || 'http://localhost:4500',
   optimizerKey: process.env.OPTIMIZER_KEY || '',

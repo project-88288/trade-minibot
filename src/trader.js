@@ -3,11 +3,13 @@
 // Manages a single open position: entry, TP/SL monitoring, and exit.
 // Mirrors the backtest's trade simulation so live behavior matches test results.
 class Trader {
-  constructor({ exchange, symbol, tradeCapital, stopLossPercent, takeProfitPercent,
+  constructor({ exchange, symbol, tradeCapital, tradePercent, tradeFee, stopLossPercent, takeProfitPercent,
                 trailingPercent, futuresMode }) {
     this.exchange     = exchange;
     this.symbol       = symbol;
     this.capital      = tradeCapital;
+    this.tradePercent = tradePercent || 0;
+    this.feePct       = tradeFee || 0;
     this.slPct        = stopLossPercent;
     this.tpPct        = takeProfitPercent;
     this.trailingPct  = trailingPercent;
@@ -19,11 +21,23 @@ class Trader {
 
   inPosition() { return this.position !== null; }
 
+  // Returns the USDT notional to spend: a percent of available balance when
+  // TRADE_PERCENT > 0, otherwise the fixed TRADE_CAPITAL — same precedence as
+  // ftrade-bot-lenovo's orderManager._tradeSize.
+  async _tradeSize() {
+    if (this.tradePercent > 0) {
+      const available = await this.exchange.getBalance();
+      return available * this.tradePercent / 100;
+    }
+    return this.capital;
+  }
+
   async enter(side) {
     if (this.position) return;
     const orderSide = side === 'long' ? 'BUY' : 'SELL';
     try {
-      const { avgPrice, executedQty } = await this.exchange.enterMarket(this.symbol, orderSide, this.capital);
+      const quoteAmt = await this._tradeSize();
+      const { avgPrice, executedQty } = await this.exchange.enterMarket(this.symbol, orderSide, quoteAmt);
       this.position  = { side, entryPrice: avgPrice, qty: executedQty };
       this.trailBest = null;
       console.log(`[TRADE] ENTER ${side.toUpperCase()} @ ${avgPrice}  qty=${executedQty}`);
@@ -38,9 +52,10 @@ class Trader {
     const exitSide = side === 'long' ? 'SELL' : 'BUY';
     try {
       const { avgPrice } = await this.exchange.exitMarket(this.symbol, exitSide, qty);
+      const fee2 = 2 * this.feePct;
       const pnl = side === 'long'
-        ? (avgPrice - entryPrice) / entryPrice * 100
-        : (entryPrice - avgPrice) / entryPrice * 100;
+        ? (avgPrice - entryPrice) / entryPrice * 100 - fee2
+        : (entryPrice - avgPrice) / entryPrice * 100 - fee2;
       if (pnl >= 0) this.stats.wins++; else this.stats.losses++;
       this.stats.trades++;
       this.stats.totalPnl = Math.round((this.stats.totalPnl + pnl) * 100) / 100;

@@ -142,6 +142,7 @@ async function refreshParams(params, trader) {
     trader.slPct       = params.stopLossPercent;
     trader.tpPct       = params.takeProfitPercent;
     trader.trailingPct = params.trailingPercent;
+    trader.feePct      = params.tradeFee;
     saveParamsToEnv(params);
     console.log(
       `[OPTIMIZER] Params refreshed  fast=${params.fastMA} slow=${params.slowMA}` +
@@ -164,6 +165,8 @@ async function liveTrade(params, exchange) {
     exchange,
     symbol:            config.symbol,
     tradeCapital:      config.tradeCapital,
+    tradePercent:      config.tradePercent,
+    tradeFee:          params.tradeFee,
     stopLossPercent:   params.stopLossPercent,
     takeProfitPercent: params.takeProfitPercent,
     trailingPercent:   params.trailingPercent,
