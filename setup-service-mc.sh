@@ -92,12 +92,10 @@ cat > "$PLIST_PATH" << PLIST
   <key>StandardErrorPath</key>
   <string>${LOG_DIR}/err.log</string>
 
-  <!-- Restart automatically on crash, but not on clean exit (exit code 0). -->
+  <!-- Restart on crash AND on clean exit — bot.js exits with code 0 at
+       midnight to pick up a fresh .env / optimizer fetch on restart. -->
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
+  <true/>
 
   <!-- Do not start automatically at login — start manually when ready. -->
   <key>RunAtLoad</key>

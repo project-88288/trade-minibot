@@ -154,6 +154,29 @@ async function refreshParams(params, trader) {
   }
 }
 
+// ── Daily restart ─────────────────────────────────────────────────────────────
+// Exits cleanly at local midnight so the LaunchAgent (KeepAlive, restarts on
+// any exit) restarts the process — picking up any .env edits (TRADE_PERCENT,
+// TRADE_CAPITAL, etc.) and a fresh optimizer fetch via loadParams() on the
+// new run. Deferred while a position is open so a restart never strands an
+// untracked position.
+function msUntilNextMidnight() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+  return next - now;
+}
+
+function scheduleMidnightRestart(trader, restartState) {
+  setTimeout(() => {
+    if (!trader.inPosition()) {
+      console.log('[BOT] Midnight restart — exiting for service restart with fresh config');
+      process.exit(0);
+    }
+    console.log('[BOT] Midnight restart deferred — position open, will exit once it closes');
+    restartState.pending = true;
+  }, msUntilNextMidnight());
+}
+
 // ── Live trading mode ─────────────────────────────────────────────────────────
 async function liveTrade(params, exchange) {
   console.log(`[BOT] Live trading ${config.symbol} ${params.interval}  futures=${config.futuresMode}`);
@@ -176,12 +199,21 @@ async function liveTrade(params, exchange) {
   setInterval(() => refreshParams(params, trader), PARAM_REFRESH_MS);
   console.log(`[OPTIMIZER] Param auto-refresh scheduled every 24h`);
 
+  const restartState = { pending: false };
+  scheduleMidnightRestart(trader, restartState);
+  console.log(`[BOT] Midnight restart scheduled in ${Math.round(msUntilNextMidnight() / 60000)}m`);
+
   let lastSignalTime = 0;
 
   exchange.subscribeKlines(config.symbol, params.interval, async (candle) => {
     // Check TP/SL on every price tick
     if (trader.inPosition()) {
       await trader.checkStops(candle);
+    }
+
+    if (restartState.pending && !trader.inPosition()) {
+      console.log('[BOT] Midnight restart — position closed, exiting for service restart');
+      process.exit(0);
     }
 
     if (!candle.closed) return;
