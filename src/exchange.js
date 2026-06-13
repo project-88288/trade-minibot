@@ -52,11 +52,15 @@ class BinanceClient {
   }
 
   // Returns candles as { time(unix sec), open, high, low, close, volume }
-  async fetchCandles(symbol, interval, limit = 500) {
+  // `startTime` (ms since epoch) limits results to candles opening at or
+  // after that point — used to fetch only the gap after local history.
+  async fetchCandles(symbol, interval, limit = 500, startTime) {
     const path = this.futures ? '/fapi/v1/klines' : '/api/v3/klines';
     // Binance rejects limits above the endpoint max (futures 1500, spot 1000)
     limit = Math.min(limit, this.futures ? 1500 : 1000);
-    const raw  = await this._request('GET', path, { symbol, interval, limit });
+    const params = { symbol, interval, limit };
+    if (startTime) params.startTime = startTime;
+    const raw  = await this._request('GET', path, params);
     return raw.map(k => ({
       time:   Math.floor(k[0] / 1000),
       open:   parseFloat(k[1]),

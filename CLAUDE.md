@@ -33,9 +33,10 @@ tail -f ~/Library/Logs/ftrade-bot/err.log
 2. `BinanceClient` is constructed (spot or futures depending on `FUTURES_MODE`)
 3. `liveTrade()` — loads 1500 historical candles via `loadCandles()` (spot is clamped to 1000 by the Binance endpoint), creates a `Trader`, subscribes to the WebSocket kline stream, and processes every candle tick
 
-**Candle sync** (`src/candleSync.js`):
-- `loadCandles()` in `bot.js` (used for both backtest and live startup) first tries `fetchCandlesFromOptimizer()`, which acts as a peer to the optimizer's P2P candle store — pulling the newest `/candles/manifest` entry matching this exchange/symbol/interval via `/candles/file`, the same snapshot format optimizer peers exchange with each other
-- Falls back to a direct `exchange.fetchCandles()` REST call if `OPTIMIZER_KEY` is unset, the optimizer has no matching snapshot, or the request fails
+**Candle history** (`src/historyStore.js`, `src/candleSync.js`):
+- `loadCandles()` in `bot.js` (used for both backtest and live startup) follows ftrade-bot-lenovo's historyManager pattern: local on-disk history (`data/candles_<exchange>_<symbol>_<interval>.json`) is the base, the gap since its last candle is fetched from the exchange via `fetchCandlesSince()`, the two are merged/deduped by time, and the result is persisted back to disk
+- On first run (no local history), the optimizer's P2P candle snapshot store is tried first via `fetchCandlesFromOptimizer()` (`/candles/manifest` + `/candles/file`) to seed the base before falling back to a full `exchange.fetchCandles()` REST fetch
+- During live trading, every newly closed candle appended to the rolling buffer is persisted via `historyStore.save()`, so the next restart resumes from there with only a small gap to fetch
 
 **Signal logic** (`src/strategy.js`):
 - EMA crossover (fast/slow) confirmed by RSI threshold — buy when fast crosses above slow and RSI is below threshold; sell when fast crosses below slow and RSI is above `100 - threshold`

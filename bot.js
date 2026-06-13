@@ -9,6 +9,7 @@ const { getLatestSignal }     = require('./src/strategy');
 const { runBacktest }         = require('./src/backtest');
 const { fetchBestParams }     = require('./src/optimizerClient');
 const { fetchCandlesFromOptimizer } = require('./src/candleSync');
+const historyStore            = require('./src/historyStore');
 const { saveParamsToEnv }     = require('./src/paramStore');
 
 const BACKTEST_MODE     = process.argv.includes('--backtest');
@@ -44,26 +45,57 @@ async function loadParams() {
 }
 
 // ── Candle loading ────────────────────────────────────────────────────────────
-// Pulls the newest candle snapshot the optimizer has for this exchange/symbol
-// /interval (peer-to-peer style, see src/candleSync.js), falling back to a
-// direct exchange fetch if the optimizer has none or is unreachable.
+// Fetches every candle from `sinceMs` (inclusive) up to now, paging through
+// the exchange's per-request limit.
+async function fetchCandlesSince(exchange, interval, sinceMs) {
+  const all = [];
+  let cursor = sinceMs;
+  while (true) {
+    const batch = await exchange.fetchCandles(config.symbol, interval, CANDLE_LIMIT, cursor);
+    if (!batch.length) break;
+    all.push(...batch);
+    const nextCursor = batch[batch.length - 1].time * 1000 + 1;
+    if (nextCursor <= cursor || batch.length < CANDLE_LIMIT) break;
+    cursor = nextCursor;
+  }
+  return all;
+}
+
+// Loads candle history the same way ftrade-bot-lenovo's historyManager does:
+// local on-disk history is the base, the gap since its last candle is
+// fetched from the exchange, the two are merged/deduped, and the result is
+// persisted back to disk so the next start resumes from here. Live trading
+// then appends each new closed candle onto this same buffer.
 async function loadCandles(exchange, interval) {
-  if (config.optimizerKey) {
+  let base = historyStore.load(config.exchange, config.symbol, interval);
+
+  if (!base.length && config.optimizerKey) {
     try {
       const synced = await fetchCandlesFromOptimizer(
         config.optimizerUrl, config.optimizerKey,
         config.exchange, config.symbol, interval,
       );
       if (synced) {
-        console.log(`[CANDLES] Synced ${synced.length} candles from optimizer`);
-        return synced.slice(-CANDLE_LIMIT);
+        console.log(`[CANDLES] Seeded ${synced.length} candles from optimizer`);
+        base = synced;
       }
-      console.log(`[CANDLES] Optimizer has no snapshot for ${config.exchange}/${config.symbol}/${interval} — falling back to ${config.exchange} fetch`);
     } catch (e) {
-      console.warn(`[CANDLES] Optimizer sync failed (${e.message}) — falling back to ${config.exchange} fetch`);
+      console.warn(`[CANDLES] Optimizer sync failed (${e.message})`);
     }
   }
-  return exchange.fetchCandles(config.symbol, interval, CANDLE_LIMIT);
+
+  const fetched = base.length
+    ? await fetchCandlesSince(exchange, interval, base[base.length - 1].time * 1000 + 1)
+    : await exchange.fetchCandles(config.symbol, interval, CANDLE_LIMIT);
+
+  const map = new Map();
+  for (const c of base)    map.set(c.time, c);
+  for (const c of fetched) map.set(c.time, c);
+  const merged = [...map.values()].sort((a, b) => a.time - b.time).slice(-CANDLE_LIMIT);
+
+  historyStore.save(config.exchange, config.symbol, interval, merged);
+  console.log(`[CANDLES] ${base.length} local + ${fetched.length} fetched → ${merged.length} total`);
+  return merged;
 }
 
 // ── Backtest mode ─────────────────────────────────────────────────────────────
@@ -159,6 +191,7 @@ async function liveTrade(params, exchange) {
       candles.push(candle);
       if (candles.length > CANDLE_LIMIT) candles = candles.slice(-CANDLE_LIMIT);
     }
+    historyStore.save(config.exchange, config.symbol, params.interval, candles);
 
     const signal = getLatestSignal(candles, params, lastSignalTime);
     if (!signal) return;
