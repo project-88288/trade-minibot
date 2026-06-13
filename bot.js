@@ -4,6 +4,7 @@ require('dotenv').config();
 
 const config                  = require('./config');
 const { BinanceClient }       = require('./src/exchange');
+const { KuCoinClient }        = require('./src/kucoinExchange');
 const { Trader }              = require('./src/trader');
 const { getLatestSignal }     = require('./src/strategy');
 const { runBacktest }         = require('./src/backtest');
@@ -129,8 +130,23 @@ async function backtest(params, exchange) {
   }
 }
 
+// ── Backtest trade gate ────────────────────────────────────────────────────────
+// Runs a backtest with the current candles/params and compares the total PnL%
+// against MIN_ALLOW_PERCENT. Used on startup and after every param reload to
+// decide whether the bot is allowed to open new trades.
+function checkTradeGate(candles, params) {
+  const { summary } = runBacktest(candles, params);
+  const allowed = summary.totalPnl >= config.minAllowPercent;
+  if (allowed) {
+    console.log(`[GATE] Backtest PnL ${summary.totalPnl}% >= MIN_ALLOW_PERCENT ${config.minAllowPercent}% — trading enabled`);
+  } else {
+    console.warn(`[GATE] Backtest PnL ${summary.totalPnl}% < MIN_ALLOW_PERCENT ${config.minAllowPercent}% — new trades halted until next reload`);
+  }
+  return allowed;
+}
+
 // ── 24-hour param refresh ─────────────────────────────────────────────────────
-async function refreshParams(params, trader) {
+async function refreshParams(params, trader, candles, tradeGate) {
   if (!config.optimizerKey) return;
   try {
     console.log('[OPTIMIZER] 24h refresh — fetching new params …');
@@ -149,6 +165,7 @@ async function refreshParams(params, trader) {
       `  sl=${params.stopLossPercent}% tp=${params.takeProfitPercent}%` +
       `  trail=${params.trailingPercent}%`
     );
+    tradeGate.allowed = checkTradeGate(candles, params);
   } catch (e) {
     console.warn(`[OPTIMIZER] 24h refresh failed (${e.message}) — keeping current params`);
   }
@@ -196,7 +213,9 @@ async function liveTrade(params, exchange) {
     futuresMode:       config.futuresMode,
   });
 
-  setInterval(() => refreshParams(params, trader), PARAM_REFRESH_MS);
+  const tradeGate = { allowed: checkTradeGate(candles, params) };
+
+  setInterval(() => refreshParams(params, trader, candles, tradeGate), PARAM_REFRESH_MS);
   console.log(`[OPTIMIZER] Param auto-refresh scheduled every 24h`);
 
   const restartState = { pending: false };
@@ -238,10 +257,16 @@ async function liveTrade(params, exchange) {
     );
 
     if (signal.type === 'buy') {
-      if (!trader.inPosition()) await trader.enter('long');
+      if (!trader.inPosition()) {
+        if (tradeGate.allowed) await trader.enter('long');
+        else console.log('[GATE] Buy signal ignored — trading halted until next reload/restart');
+      }
     } else if (signal.type === 'sell') {
       if (trader.inPosition()) await trader.exit('signal');
-      if (config.futuresMode)  await trader.enter('short');
+      if (config.futuresMode) {
+        if (tradeGate.allowed) await trader.enter('short');
+        else console.log('[GATE] Short signal ignored — trading halted until next reload/restart');
+      }
     }
   });
 }
@@ -249,18 +274,34 @@ async function liveTrade(params, exchange) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
   const params   = await loadParams();
-  const exchange = new BinanceClient({
-    apiKey:      config.apiKey,
-    apiSecret:   config.apiSecret,
-    futuresMode: config.futuresMode,
-  });
+  const isKuCoin = config.exchange === 'kucoin';
+  const exchange = isKuCoin
+    ? new KuCoinClient({
+        apiKey:         config.kucoinApiKey,
+        apiSecret:      config.kucoinApiSecret,
+        passphrase:     config.kucoinApiPassphrase,
+        symbolOverride: config.kucoinSymbol,
+        marginMode:     config.kucoinMarginMode,
+        leverage:       config.leverage,
+      })
+    : new BinanceClient({
+        apiKey:      config.apiKey,
+        apiSecret:   config.apiSecret,
+        futuresMode: config.futuresMode,
+      });
 
   if (BACKTEST_MODE) {
     await backtest(params, exchange);
     return;
   }
 
-  if (!config.apiKey || !config.apiSecret) {
+  if (isKuCoin) {
+    if (!config.kucoinApiKey || !config.kucoinApiSecret || !config.kucoinApiPassphrase) {
+      console.error('[BOT] KUCOIN_API_KEY, KUCOIN_API_SECRET and KUCOIN_API_PASSPHRASE must be set for live trading.');
+      console.error('      Run with --backtest to test without credentials.');
+      process.exit(1);
+    }
+  } else if (!config.apiKey || !config.apiSecret) {
     console.error('[BOT] BINANCE_API_KEY and BINANCE_API_SECRET must be set for live trading.');
     console.error('      Run with --backtest to test without credentials.');
     process.exit(1);

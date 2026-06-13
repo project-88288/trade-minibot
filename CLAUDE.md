@@ -28,12 +28,12 @@ tail -f ~/Library/Logs/ftrade-bot-<folder-name>/err.log
 
 ## Architecture
 
-`ftrade-bot` is a Binance trading bot that pairs with a companion `ftrade-optimizer-bot` service. At startup it fetches the optimizer's best-ranked parameter set for the configured symbol/interval; if the optimizer is unreachable it falls back to `.env` values. Every 24 hours the live bot re-fetches and hot-applies new params without restarting. It also exits cleanly at local midnight so the LaunchAgent restarts it with a fully fresh `.env`/optimizer fetch (see **Midnight restart** below).
+`ftrade-bot` is a Binance/KuCoin trading bot that pairs with a companion `ftrade-optimizer-bot` service. At startup it fetches the optimizer's best-ranked parameter set for the configured symbol/interval; if the optimizer is unreachable it falls back to `.env` values. Every 24 hours the live bot re-fetches and hot-applies new params without restarting. It also exits cleanly at local midnight so the LaunchAgent restarts it with a fully fresh `.env`/optimizer fetch (see **Midnight restart** below).
 
 **Startup flow** (`bot.js`):
 1. `loadParams()` — calls `optimizerClient.fetchBestParams()` → merges result into `config` → writes back to `.env` via `paramStore.saveParamsToEnv()` as a fallback backup
-2. `BinanceClient` is constructed (spot or futures depending on `FUTURES_MODE`)
-3. `liveTrade()` — loads 1500 historical candles via `loadCandles()` (spot is clamped to 1000 by the Binance endpoint), creates a `Trader`, subscribes to the WebSocket kline stream, and processes every candle tick
+2. `BinanceClient` or `KuCoinClient` is constructed depending on `EXCHANGE` (`src/exchange.js` / `src/kucoinExchange.js`). Binance is spot or futures depending on `FUTURES_MODE`; KuCoin support is KuCoin Futures only, so `FUTURES_MODE` is always treated as `true` when `EXCHANGE=kucoin`. KuCoin requires `KUCOIN_API_KEY`/`KUCOIN_API_SECRET`/`KUCOIN_API_PASSPHRASE` and maps the Binance-style `SYMBOL` (e.g. `BTCUSDT`) to its futures symbol (e.g. `XBTUSDTM`) unless `KUCOIN_SYMBOL` overrides it
+3. `liveTrade()` — loads 1500 historical candles via `loadCandles()` (Binance spot is clamped to 1000 by the Binance endpoint; KuCoin paginates internally in `fetchCandles()`), creates a `Trader`, subscribes to the WebSocket kline stream, and processes every candle tick
 
 **Midnight restart** (`bot.js`):
 - `scheduleMidnightRestart()` sets a timeout for the next local midnight; when it fires, the process exits with code 0 if no position is open, or sets `restartState.pending` if one is — the kline handler then exits as soon as that position closes
@@ -64,3 +64,7 @@ tail -f ~/Library/Logs/ftrade-bot-<folder-name>/err.log
 ## Configuration
 
 All settings live in `.env` (see `.env.example`). The bot overwrites the strategy-param keys in `.env` after each successful optimizer fetch — this is intentional so params survive a restart when the optimizer is temporarily down. `OPTIMIZER_KEY` is required to contact the optimizer; if unset the bot runs on raw `.env` params.
+
+**Backtest trade gate** (`bot.js` — `checkTradeGate()`):
+- On startup, and after every param reload (24h optimizer refresh), the bot runs a backtest over the currently loaded candles with the active params (optimizer-supplied or `.env` fallback) and compares the total PnL% to `MIN_ALLOW_PERCENT`
+- If the backtest result is below `MIN_ALLOW_PERCENT`, new entries are skipped (logged as `[GATE] ... ignored`) but the bot keeps running — it still monitors and exits any open position normally. The gate is only re-evaluated on the next reload/restart
