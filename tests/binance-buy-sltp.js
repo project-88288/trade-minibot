@@ -38,29 +38,30 @@ async function openLongWithTPSL({
     }
   );
 
-  // Take Profit
-  await client.newOrder(
+  // Take Profit (Algo Order API — STOP_MARKET/TAKE_PROFIT_MARKET via
+  // /fapi/v1/order now fail with -4120, must use /fapi/v1/algoOrder)
+  await client.signRequest('POST', 'https://fapi.binance.com/fapi/v1/algoOrder', {
+    algoType: 'CONDITIONAL',
     symbol,
-    'SELL',
-    'TAKE_PROFIT_MARKET',
-    {
-      stopPrice: takeProfit,
-      closePosition: 'true',
-      workingType: 'MARK_PRICE'
-    }
-  );
+    side: 'SELL',
+    type: 'TAKE_PROFIT_MARKET',
+    triggerPrice: takeProfit,
+    closePosition: 'true',
+    workingType: 'MARK_PRICE',
+    recvWindow: 10000
+  });
 
   // Stop Loss
-  await client.newOrder(
+  await client.signRequest('POST', 'https://fapi.binance.com/fapi/v1/algoOrder', {
+    algoType: 'CONDITIONAL',
     symbol,
-    'SELL',
-    'STOP_MARKET',
-    {
-      stopPrice: stopLoss,
-      closePosition: 'true',
-      workingType: 'MARK_PRICE'
-    }
-  );
+    side: 'SELL',
+    type: 'STOP_MARKET',
+    triggerPrice: stopLoss,
+    closePosition: 'true',
+    workingType: 'MARK_PRICE',
+    recvWindow: 10000
+  });
 
   console.log('LONG opened with TP & SL');
 }

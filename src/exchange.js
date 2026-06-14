@@ -87,14 +87,35 @@ class BinanceClient {
   // Enter a position — spends quoteCapital USDT at market price.
   // Returns { avgPrice, executedQty }
   async enterMarket(symbol, side, quoteCapital) {
-    const params = { symbol, side: side.toUpperCase(), type: 'MARKET', quoteOrderQty: quoteCapital };
-    if (this.futures) params.positionSide = 'BOTH';
+    const params = { symbol, side: side.toUpperCase(), type: 'MARKET' };
+    if (this.futures) {
+      // Futures MARKET orders reject quoteOrderQty (-1102) — convert to a
+      // base-asset quantity using the symbol's LOT_SIZE stepSize.
+      const { stepSize } = await this._getFilters(symbol);
+      const ticker = await this._request('GET', '/fapi/v1/ticker/price', { symbol });
+      const price  = parseFloat(ticker.price);
+      params.quantity     = _roundDownToStep(quoteCapital / price, stepSize);
+      params.positionSide = 'BOTH';
+    } else {
+      params.quoteOrderQty = quoteCapital;
+    }
     const order = await this._request('POST',
       this.futures ? '/fapi/v1/order' : '/api/v3/order', params, true);
-    return {
-      avgPrice:    _avgFillPrice(order),
-      executedQty: parseFloat(order.executedQty),
-    };
+
+    let avgPrice    = _avgFillPrice(order);
+    let executedQty = parseFloat(order.executedQty);
+    // Futures MARKET orders sometimes return avgPrice "0"/executedQty "0" in
+    // the immediate response before the fill is reflected — poll briefly.
+    if (this.futures && (!avgPrice || !executedQty)) {
+      for (let attempt = 0; attempt < 5 && (!avgPrice || !executedQty); attempt++) {
+        await new Promise(r => setTimeout(r, 300));
+        const status = await this._request('GET', '/fapi/v1/order',
+          { symbol, orderId: order.orderId, recvWindow: 10000 }, true);
+        avgPrice    = _avgFillPrice(status);
+        executedQty = parseFloat(status.executedQty);
+      }
+    }
+    return { avgPrice, executedQty };
   }
 
   // Exit a position — sells exact baseQty at market price.
@@ -104,18 +125,36 @@ class BinanceClient {
     if (this.futures) { params.positionSide = 'BOTH'; params.reduceOnly = 'true'; }
     const order = await this._request('POST',
       this.futures ? '/fapi/v1/order' : '/api/v3/order', params, true);
-    return { avgPrice: _avgFillPrice(order) };
+
+    let avgPrice = _avgFillPrice(order);
+    // Futures MARKET orders sometimes return avgPrice "0" in the immediate
+    // response before the fill is reflected — poll briefly.
+    if (this.futures && !avgPrice) {
+      for (let attempt = 0; attempt < 5 && !avgPrice; attempt++) {
+        await new Promise(r => setTimeout(r, 300));
+        const status = await this._request('GET', '/fapi/v1/order',
+          { symbol, orderId: order.orderId, recvWindow: 10000 }, true);
+        avgPrice = _avgFillPrice(status);
+      }
+    }
+    return { avgPrice };
   }
 
   // Returns { tickSize } for the symbol's PRICE_FILTER, cached.
   async _getTickSize(symbol) {
+    const { tickSize } = await this._getFilters(symbol);
+    return { tickSize };
+  }
+
+  // Returns { tickSize, stepSize } for the symbol's PRICE_FILTER/LOT_SIZE, cached.
+  async _getFilters(symbol) {
     if (this._filterCache[symbol]) return this._filterCache[symbol];
     const path = this.futures ? '/fapi/v1/exchangeInfo' : '/api/v3/exchangeInfo';
     const info = await this._request('GET', path, this.futures ? {} : { symbol });
     const symInfo = info.symbols.find(s => s.symbol === symbol);
-    const priceFilter = symInfo.filters.find(f => f.filterType === 'PRICE_FILTER');
-    const tickSize = parseFloat(priceFilter.tickSize);
-    this._filterCache[symbol] = { tickSize };
+    const tickSize = parseFloat(symInfo.filters.find(f => f.filterType === 'PRICE_FILTER').tickSize);
+    const stepSize = parseFloat(symInfo.filters.find(f => f.filterType === 'LOT_SIZE').stepSize);
+    this._filterCache[symbol] = { tickSize, stepSize };
     return this._filterCache[symbol];
   }
 
@@ -212,6 +251,14 @@ class BinanceClient {
 function _roundToTick(value, tick) {
   const decimals = (tick.toString().split('.')[1] || '').length;
   const rounded  = Math.round(value / tick) * tick;
+  return rounded.toFixed(decimals);
+}
+
+// Rounds `value` down to a multiple of `step` (Binance LOT_SIZE), formatted
+// to the same number of decimals as `step`.
+function _roundDownToStep(value, step) {
+  const decimals = (step.toString().split('.')[1] || '').length;
+  const rounded  = Math.floor(value / step) * step;
   return rounded.toFixed(decimals);
 }
 
