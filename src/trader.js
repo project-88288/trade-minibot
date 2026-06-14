@@ -34,6 +34,23 @@ class Trader {
     return this.capital;
   }
 
+  // Adopts a position that already exists on the exchange (e.g. the bot
+  // restarted, or a previous entry's protective-order sync failed and left
+  // the position naked) and (re)syncs its exchange-native TP/SL so it's
+  // protected going forward.
+  async adoptPosition({ side, entryPrice, qty }) {
+    this.position  = { side, entryPrice, qty };
+    this.trailBest = null;
+    this.syncedSl  = null;
+    this.syncedTp  = null;
+    console.log(`[TRADE] Adopted existing ${side.toUpperCase()} position @ ${entryPrice}  qty=${qty}`);
+
+    const isLong = side === 'long';
+    const tp = entryPrice * (isLong ? 1 + this.tpPct / 100 : 1 - this.tpPct / 100);
+    const sl = entryPrice * (isLong ? 1 - this.slPct / 100 : 1 + this.slPct / 100);
+    await this._syncProtectiveOrders(tp, sl);
+  }
+
   async enter(side) {
     if (this.position) return;
     const orderSide = side === 'long' ? 'BUY' : 'SELL';
@@ -137,8 +154,10 @@ class Trader {
       if (isLong ? tsl > entryPrice : tsl < entryPrice) effectiveSl = tsl;
     }
 
-    // Keep the exchange-side protective stop in sync as the trailing stop moves.
-    if (effectiveSl !== sl && effectiveSl !== this.syncedSl) {
+    // Keep the exchange-side protective stop in sync as the trailing stop
+    // moves, and retry if the initial sync (on entry) never succeeded.
+    if ((this.syncedTp === null || this.syncedSl === null) ||
+        (effectiveSl !== sl && effectiveSl !== this.syncedSl)) {
       await this._syncProtectiveOrders(tp, effectiveSl);
     }
 

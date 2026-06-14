@@ -229,6 +229,14 @@ async function liveTrade(params, exchange) {
     futuresMode:       config.futuresMode,
   });
 
+  // Recover a position that's already open on the exchange — e.g. a previous
+  // run entered but its protective-order sync failed, leaving it naked, or
+  // the bot restarted while a position was open.
+  if (typeof exchange.getPosition === 'function') {
+    const existing = await exchange.getPosition(config.symbol);
+    if (existing) await trader.adoptPosition(existing);
+  }
+
   const tradeGate = { allowed: checkTradeGate(candles, params) };
 
   setInterval(() => refreshParams(params, trader, candles, tradeGate), PARAM_REFRESH_MS);
