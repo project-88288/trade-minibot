@@ -84,6 +84,20 @@ class BinanceClient {
     return b ? parseFloat(b.free) : 0;
   }
 
+  // Returns the open position for `symbol`, or null if flat (futures only).
+  async getPosition(symbol) {
+    if (!this.futures) return null;
+    const positions = await this._request('GET', '/fapi/v2/positionRisk', { symbol, recvWindow: 10000 }, true);
+    const p = positions.find(p => p.symbol === symbol);
+    const amt = p ? parseFloat(p.positionAmt) : 0;
+    if (!amt) return null;
+    return {
+      side:       amt > 0 ? 'long' : 'short',
+      qty:        Math.abs(amt),
+      entryPrice: parseFloat(p.entryPrice),
+    };
+  }
+
   // Enter a position — spends quoteCapital USDT at market price.
   // Returns { avgPrice, executedQty }
   async enterMarket(symbol, side, quoteCapital) {
