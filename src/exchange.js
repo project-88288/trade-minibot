@@ -119,25 +119,27 @@ class BinanceClient {
     return this._filterCache[symbol];
   }
 
-  // Places exchange-native TAKE_PROFIT_MARKET / STOP_MARKET reduce-only
+  // Places exchange-native TAKE_PROFIT_MARKET / STOP_MARKET conditional
   // orders that close the whole position when triggered (futures only).
+  // Binance migrated these order types to the Algo Order API — submitting
+  // them to /fapi/v1/order now fails with -4120.
   async placeFuturesStopOrders(symbol, { side, takeProfitPrice, stopLossPrice }) {
     if (!this.futures) return;
     const { tickSize } = await this._getTickSize(symbol);
     const closeSide = side === 'long' ? 'SELL' : 'BUY';
     const orders = [];
     if (takeProfitPrice) {
-      orders.push(this._request('POST', '/fapi/v1/order', {
-        symbol, side: closeSide, type: 'TAKE_PROFIT_MARKET',
-        stopPrice: _roundToTick(takeProfitPrice, tickSize),
-        closePosition: 'true', workingType: 'MARK_PRICE',
+      orders.push(this._request('POST', '/fapi/v1/algoOrder', {
+        algoType: 'CONDITIONAL', symbol, side: closeSide, type: 'TAKE_PROFIT_MARKET',
+        triggerPrice: _roundToTick(takeProfitPrice, tickSize),
+        closePosition: 'true', workingType: 'MARK_PRICE', recvWindow: 10000,
       }, true));
     }
     if (stopLossPrice) {
-      orders.push(this._request('POST', '/fapi/v1/order', {
-        symbol, side: closeSide, type: 'STOP_MARKET',
-        stopPrice: _roundToTick(stopLossPrice, tickSize),
-        closePosition: 'true', workingType: 'MARK_PRICE',
+      orders.push(this._request('POST', '/fapi/v1/algoOrder', {
+        algoType: 'CONDITIONAL', symbol, side: closeSide, type: 'STOP_MARKET',
+        triggerPrice: _roundToTick(stopLossPrice, tickSize),
+        closePosition: 'true', workingType: 'MARK_PRICE', recvWindow: 10000,
       }, true));
     }
     await Promise.all(orders);
@@ -161,10 +163,16 @@ class BinanceClient {
     return order.orderListId;
   }
 
-  // Cancels all open orders for a symbol (futures stop orders or spot OCO).
+  // Cancels all open orders for a symbol (futures stop orders or spot OCO),
+  // including any resting Algo (conditional TP/SL) orders.
   async cancelAllOrders(symbol) {
     const path = this.futures ? '/fapi/v1/allOpenOrders' : '/api/v3/openOrders';
-    await this._request('DELETE', path, { symbol }, true);
+    await this._request('DELETE', path, { symbol, recvWindow: 10000 }, true);
+    if (this.futures) {
+      const open = await this._request('GET', '/fapi/v1/openAlgoOrders', { symbol, recvWindow: 10000 }, true);
+      await Promise.all((open.algoOrders || open || []).map(o =>
+        this._request('DELETE', '/fapi/v1/algoOrder', { algoId: o.algoId, recvWindow: 10000 }, true)));
+    }
   }
 
   // Subscribes to kline stream. `onCandle` receives each update including

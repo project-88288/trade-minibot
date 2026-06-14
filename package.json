@@ -10,7 +10,10 @@
     "set-stops": "node set-stops.js"
   },
   "dependencies": {
-    "dotenv": "^16.0.0",
+    "@binance/futures-connector": "^0.1.7",
+    "axios": "^1.17.0",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.6.1",
     "ws": "^8.18.0"
   }
 }
