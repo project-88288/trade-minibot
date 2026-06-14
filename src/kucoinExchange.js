@@ -142,6 +142,22 @@ class KuCoinClient {
     return parseFloat(data.availableBalance || 0);
   }
 
+  // Returns the open position for `symbol`, or null if flat.
+  // `qty` is in base-asset units (contracts * multiplier); `side` is
+  // 'long' or 'short' based on the sign of currentQty.
+  async getPosition(symbol) {
+    const ks   = this._ks(symbol);
+    const info = await this._contractInfo(ks);
+    const data = await this._request('GET', '/api/v1/position', { symbol: ks }, true);
+    const currentQty = parseFloat(data?.currentQty || 0);
+    if (!currentQty) return null;
+    return {
+      side:       currentQty > 0 ? 'long' : 'short',
+      qty:        Math.abs(currentQty) * info.multiplier,
+      entryPrice: parseFloat(data.avgEntryPrice || 0),
+    };
+  }
+
   // Enter a position — spends quoteCapital USDT at market price.
   // Returns { avgPrice, executedQty } (executedQty in base-asset units)
   async enterMarket(symbol, side, quoteCapital) {
@@ -159,8 +175,11 @@ class KuCoinClient {
   async exitMarket(symbol, side, baseQty) {
     const ks   = this._ks(symbol);
     const info = await this._contractInfo(ks);
+    const ticker = await this._request('GET', '/api/v1/ticker', { symbol: ks });
+    const price  = parseFloat(ticker.price);
+
     const contracts = Math.max(1, Math.round(baseQty / info.multiplier));
-    const { avgPrice } = await this._placeOrder(ks, side, contracts, info, 0, true);
+    const { avgPrice } = await this._placeOrder(ks, side, contracts, info, price, true);
     return { avgPrice };
   }
 
@@ -180,14 +199,20 @@ class KuCoinClient {
 
     let avgPrice    = fallbackPrice;
     let filledConts = contracts;
-    try {
-      const order = await this._request('GET', `/api/v1/orders/${resp.orderId}`, {}, true);
-      filledConts = parseFloat(order.filledSize) || contracts;
-      const filledValue = parseFloat(order.filledValue) || 0;
-      if (filledValue > 0 && filledConts > 0) {
-        avgPrice = filledValue / (filledConts * info.multiplier);
-      }
-    } catch (_) {}
+    // The fill often isn't reflected yet on the immediate status fetch, so
+    // poll briefly until filledValue is populated before giving up.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 300));
+      try {
+        const order = await this._request('GET', `/api/v1/orders/${resp.orderId}`, {}, true);
+        filledConts = parseFloat(order.filledSize) || contracts;
+        const filledValue = parseFloat(order.filledValue) || 0;
+        if (filledValue > 0 && filledConts > 0) {
+          avgPrice = filledValue / (filledConts * info.multiplier);
+          break;
+        }
+      } catch (_) {}
+    }
 
     return { avgPrice, executedQty: filledConts * info.multiplier };
   }
@@ -211,6 +236,7 @@ class KuCoinClient {
         stopPrice:     _roundToTick(takeProfitPrice, info.tickSize),
         reduceOnly:    true,
         closeOrder:    true,
+        marginMode:    this.marginMode,
       }, true));
     }
     if (stopLossPrice) {
@@ -224,6 +250,7 @@ class KuCoinClient {
         stopPrice:     _roundToTick(stopLossPrice, info.tickSize),
         reduceOnly:    true,
         closeOrder:    true,
+        marginMode:    this.marginMode,
       }, true));
     }
     await Promise.all(orders);
