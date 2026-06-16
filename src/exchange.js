@@ -160,6 +160,13 @@ class BinanceClient {
     return { tickSize };
   }
 
+  // Formats a price to the correct number of decimal places for this symbol.
+  async formatPrice(symbol, price) {
+    const { tickSize } = await this._getFilters(symbol);
+    const decimals = (tickSize.toString().split('.')[1] || '').length;
+    return price.toFixed(decimals);
+  }
+
   // Returns { tickSize, stepSize } for the symbol's PRICE_FILTER/LOT_SIZE, cached.
   async _getFilters(symbol) {
     if (this._filterCache[symbol]) return this._filterCache[symbol];

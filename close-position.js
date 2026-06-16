@@ -31,14 +31,16 @@ async function main() {
     return;
   }
 
-  console.log(`Open ${position.side.toUpperCase()} position: qty=${position.qty} entry=${position.entryPrice}`);
+  const entryFmt = await exchange.formatPrice(config.symbol, position.entryPrice);
+  console.log(`Open ${position.side.toUpperCase()} position: qty=${position.qty} entry=${entryFmt}`);
 
   await exchange.cancelAllOrders(config.symbol);
 
   const exitSide = position.side === 'long' ? 'SELL' : 'BUY';
   const { avgPrice } = await exchange.exitMarket(config.symbol, exitSide, position.qty);
 
-  console.log(`Closed ${position.side.toUpperCase()} ${config.symbol} @ ${avgPrice}`);
+  const exitFmt = await exchange.formatPrice(config.symbol, avgPrice);
+  console.log(`Closed ${position.side.toUpperCase()} ${config.symbol} @ ${exitFmt}`);
 }
 
 main().catch(e => {

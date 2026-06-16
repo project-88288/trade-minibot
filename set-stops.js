@@ -37,9 +37,14 @@ async function main() {
   const takeProfitPrice = entryPrice * (isLong ? 1 + config.takeProfitPercent / 100 : 1 - config.takeProfitPercent / 100);
   const stopLossPrice   = entryPrice * (isLong ? 1 - config.stopLossPercent / 100   : 1 + config.stopLossPercent / 100);
 
+  const [epFmt, tpFmt, slFmt] = await Promise.all([
+    exchange.formatPrice(config.symbol, entryPrice),
+    exchange.formatPrice(config.symbol, takeProfitPrice),
+    exchange.formatPrice(config.symbol, stopLossPrice),
+  ]);
   console.log(
-    `Open ${side.toUpperCase()} position: qty=${qty} entry=${entryPrice}\n` +
-    `Setting TP=${takeProfitPrice} (${config.takeProfitPercent}%)  SL=${stopLossPrice} (${config.stopLossPercent}%)`
+    `Open ${side.toUpperCase()} position: qty=${qty} entry=${epFmt}\n` +
+    `Setting TP=${tpFmt} (${config.takeProfitPercent}%)  SL=${slFmt} (${config.stopLossPercent}%)`
   );
 
   await exchange.cancelAllOrders(config.symbol);

@@ -275,8 +275,11 @@ async function liveTrade(params, exchange) {
     if (!signal) return;
 
     lastSignalTime = signal.time;
+    const signalPriceFmt = typeof exchange.formatPrice === 'function'
+      ? await exchange.formatPrice(config.symbol, signal.price)
+      : signal.price;
     console.log(
-      `[SIGNAL] ${signal.type.toUpperCase().padEnd(4)} @ ${signal.price}` +
+      `[SIGNAL] ${signal.type.toUpperCase().padEnd(4)} @ ${signalPriceFmt}` +
       `  RSI=${signal.rsiVal.toFixed(1)}  ${new Date(signal.time * 1000).toISOString().slice(0, 16)}`
     );
 

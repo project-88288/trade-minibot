@@ -23,6 +23,13 @@ class Trader {
 
   inPosition() { return this.position !== null; }
 
+  async _fmt(price) {
+    if (typeof this.exchange.formatPrice === 'function') {
+      return this.exchange.formatPrice(this.symbol, price);
+    }
+    return String(price);
+  }
+
   // Returns the USDT notional to spend: a percent of available balance when
   // TRADE_PERCENT > 0, otherwise the fixed TRADE_CAPITAL — same precedence as
   // ftrade-bot-lenovo's orderManager._tradeSize.
@@ -43,7 +50,7 @@ class Trader {
     this.trailBest = null;
     this.syncedSl  = null;
     this.syncedTp  = null;
-    console.log(`[TRADE] Adopted existing ${side.toUpperCase()} position @ ${entryPrice}  qty=${qty}`);
+    console.log(`[TRADE] Adopted existing ${side.toUpperCase()} position @ ${await this._fmt(entryPrice)}  qty=${qty}`);
 
     const isLong = side === 'long';
     const tp = entryPrice * (isLong ? 1 + this.tpPct / 100 : 1 - this.tpPct / 100);
@@ -61,7 +68,7 @@ class Trader {
       this.trailBest = null;
       this.syncedSl  = null;
       this.syncedTp  = null;
-      console.log(`[TRADE] ENTER ${side.toUpperCase()} @ ${avgPrice}  qty=${executedQty}`);
+      console.log(`[TRADE] ENTER ${side.toUpperCase()} @ ${await this._fmt(avgPrice)}  qty=${executedQty}`);
 
       const isLong = side === 'long';
       const tp = avgPrice * (isLong ? 1 + this.tpPct / 100 : 1 - this.tpPct / 100);
@@ -95,7 +102,8 @@ class Trader {
       }
       this.syncedTp = takeProfitPrice;
       this.syncedSl = stopLossPrice;
-      console.log(`[TRADE] protective orders synced — TP=${takeProfitPrice}  SL=${stopLossPrice}`);
+      const [tpFmt, slFmt] = await Promise.all([this._fmt(takeProfitPrice), this._fmt(stopLossPrice)]);
+      console.log(`[TRADE] protective orders synced — TP=${tpFmt}  SL=${slFmt}`);
     } catch (e) {
       console.error(`[TRADE] protective order sync failed: ${e.message}`);
     }
@@ -118,7 +126,7 @@ class Trader {
       this.stats.trades++;
       this.stats.totalPnl = Math.round((this.stats.totalPnl + pnl) * 100) / 100;
       console.log(
-        `[TRADE] EXIT ${side.toUpperCase()} @ ${avgPrice}` +
+        `[TRADE] EXIT ${side.toUpperCase()} @ ${await this._fmt(avgPrice)}` +
         `  pnl=${pnl.toFixed(2)}%  reason=${reason}` +
         `  total=${this.stats.totalPnl}%  (${this.stats.wins}W/${this.stats.losses}L)`
       );

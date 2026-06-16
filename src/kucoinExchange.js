@@ -101,6 +101,14 @@ class KuCoinClient {
     return info;
   }
 
+  // Formats a price to the correct number of decimal places for this symbol.
+  async formatPrice(symbol, price) {
+    const ks = this._ks(symbol);
+    const { tickSize } = await this._contractInfo(ks);
+    const decimals = (tickSize.toString().split('.')[1] || '').length;
+    return price.toFixed(decimals);
+  }
+
   // Returns candles as { time(unix sec), open, high, low, close, volume }.
   // `startTime` (ms since epoch) limits results to candles opening at or
   // after that point — used to fetch only the gap after local history.
