@@ -18,6 +18,10 @@ module.exports = {
   // after every param reload (optimizer 24h refresh / midnight restart).
   minAllowPercent: parseFloat(process.env.MIN_ALLOW_PERCENT || '10'),
 
+  // When true, refuse to start if the API key can withdraw funds (see the
+  // startup [KEYCHECK]). Otherwise such issues are warnings only.
+  strictKeyCheck: process.env.STRICT_KEY_CHECK === 'true',
+
   optimizerUrl: process.env.OPTIMIZER_URL || 'http://localhost:4500',
   optimizerKey: process.env.OPTIMIZER_KEY || '',
   exchange:     process.env.EXCHANGE       || 'binance',

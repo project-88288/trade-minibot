@@ -215,6 +215,46 @@ function scheduleMidnightRestart(trader, restartState) {
   }, msUntilNextMidnight());
 }
 
+// ── API-key permission validation ─────────────────────────────────────────────
+// Startup fail-safe: checks the API key is no more powerful than a trading bot
+// needs. The critical one is withdrawals — a key that can withdraw turns a
+// leak into a drained account. Warns by default; with STRICT_KEY_CHECK=true it
+// refuses to start when withdrawals are enabled.
+async function checkKeyPermissions(exchange) {
+  if (typeof exchange.getApiPermissions !== 'function') {
+    console.log('[KEYCHECK] Permission validation not supported for this exchange — skipping');
+    return;
+  }
+
+  let perms;
+  try {
+    perms = await exchange.getApiPermissions();
+  } catch (e) {
+    console.warn(`[KEYCHECK] Could not read API key permissions (${e.message}) — continuing`);
+    return;
+  }
+
+  const warnings = [];
+  if (perms.enableWithdrawals)
+    warnings.push('withdrawals are ENABLED — a leaked key could drain funds; disable withdrawal permission');
+  if (!perms.ipRestrict)
+    warnings.push("no IP allowlist set — restrict the key to this host's IP");
+  if (config.futuresMode && perms.enableFutures === false)
+    warnings.push('futures trading is NOT enabled on this key — orders will fail');
+  if (!config.futuresMode && perms.enableSpotAndMarginTrading === false)
+    warnings.push('spot trading is NOT enabled on this key — orders will fail');
+
+  if (!warnings.length) {
+    console.log('[KEYCHECK] API key permissions OK — no withdrawals, IP-restricted');
+    return;
+  }
+  for (const w of warnings) console.warn(`[KEYCHECK] ⚠ ${w}`);
+  if (config.strictKeyCheck && perms.enableWithdrawals) {
+    console.error('[KEYCHECK] STRICT_KEY_CHECK=true and withdrawals enabled — refusing to start');
+    process.exit(1);
+  }
+}
+
 // ── Live trading mode ─────────────────────────────────────────────────────────
 async function liveTrade(params, exchange) {
   console.log(`[BOT] Live trading ${config.symbol} ${params.interval}  futures=${config.futuresMode}`);
@@ -339,6 +379,7 @@ async function main() {
     process.exit(1);
   }
 
+  await checkKeyPermissions(exchange);
   await liveTrade(params, exchange);
 }
 
