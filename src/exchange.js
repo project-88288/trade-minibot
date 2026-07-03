@@ -21,12 +21,13 @@ class BinanceClient {
     return `${qs}&signature=${sig}`;
   }
 
-  _request(method, path, params = {}, signed = false) {
+  _request(method, path, params = {}, signed = false, baseOverride) {
     return new Promise((resolve, reject) => {
+      const base = baseOverride || this.restBase;
       const qs  = signed ? this._sign(params) : new URLSearchParams(params).toString();
       const url = (method === 'GET' || method === 'DELETE')
-        ? `${this.restBase}${path}${qs ? '?' + qs : ''}`
-        : `${this.restBase}${path}`;
+        ? `${base}${path}${qs ? '?' + qs : ''}`
+        : `${base}${path}`;
       const body = (method !== 'GET' && method !== 'DELETE') ? qs : undefined;
 
       const opts = {
@@ -70,6 +71,22 @@ class BinanceClient {
       close:  parseFloat(k[4]),
       volume: parseFloat(k[5]),
     }));
+  }
+
+  // Returns the API key's permission flags for a startup security check.
+  // apiRestrictions is a spot SAPI endpoint served from api.binance.com even
+  // for futures-only keys, so it's requested against the spot base explicitly.
+  async getApiPermissions() {
+    const info = await this._request(
+      'GET', '/sapi/v1/account/apiRestrictions', { recvWindow: 10000 }, true,
+      'https://api.binance.com',
+    );
+    return {
+      ipRestrict:                 !!info.ipRestrict,
+      enableWithdrawals:          !!info.enableWithdrawals,
+      enableFutures:              !!info.enableFutures,
+      enableSpotAndMarginTrading: !!info.enableSpotAndMarginTrading,
+    };
   }
 
   // Returns available USDT balance
