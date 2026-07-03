@@ -132,14 +132,19 @@ async function backtest(params, exchange) {
 
   if (trades.length) {
     console.log('\nTrade log:');
+    const fmtPrice = typeof exchange.formatPrice === 'function'
+      ? (p) => exchange.formatPrice(config.symbol, p)
+      : (p) => Promise.resolve(String(p));
     for (let i = 0; i < trades.length; i++) {
       const t = trades[i];
-      const pnlStr = (t.netPnl >= 0 ? '+' : '') + t.netPnl + '%';
+      const pnlStr   = (t.netPnl >= 0 ? '+' : '') + t.netPnl + '%';
+      const entryFmt = await fmtPrice(t.entryPrice);
+      const exitFmt  = await fmtPrice(t.exitPrice);
       console.log(
         `  ${String(i + 1).padStart(3)}.` +
         ` ${t.side.padEnd(5)}` +
-        `  in  ${t.entryTime.slice(0, 16)} @ ${t.entryPrice}` +
-        `  out ${t.exitTime.slice(0, 16)} @ ${t.exitPrice}` +
+        `  in  ${t.entryTime.slice(0, 16)} @ ${entryFmt}` +
+        `  out ${t.exitTime.slice(0, 16)} @ ${exitFmt}` +
         `  ${pnlStr.padStart(8)}  [${t.exitReason}]`
       );
     }
