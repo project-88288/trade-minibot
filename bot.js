@@ -188,7 +188,7 @@ async function backtest(params, exchange) {
   console.log('── Summary ────────────────────────────────────────');
   console.log(`  Candles  : ${s.candleLength}`);
   console.log(`  Trades   : ${s.total} (${s.wins}W / ${s.losses}L)  WinRate: ${s.winRate}%`);
-  console.log(`  PnL      : ${s.totalPnl}%  MaxDD: ${s.maxDD}%`);
+  console.log(`  PnL      : ${s.totalPnl}%  MaxDD: ${s.maxDD}%  Fees: $${s.totalFee}`);
   console.log(`  ROA      : ${s.annualReturn}%/yr`);
   console.log(`  Capital  : $100 → $${s.finalCapital}`);
   console.log('───────────────────────────────────────────────────');
