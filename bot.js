@@ -11,16 +11,17 @@ const { runBacktest }         = require('./src/backtest');
 const { fetchBestParams }     = require('./src/optimizerClient');
 const { fetchCandlesFromOptimizer } = require('./src/candleSync');
 const historyStore            = require('./src/historyStore');
-const { saveParamsToEnv }     = require('./src/paramStore');
+const { saveParamsToEnv, saveBacktestToEnv } = require('./src/paramStore');
 
 const BACKTEST_MODE     = process.argv.includes('--backtest');
 const CANDLE_LIMIT      = 1500;
 const PARAM_REFRESH_MS  = 24 * 60 * 60 * 1000; // 24 hours
 
-// Rolling candle buffer size. Starts at CANDLE_LIMIT but is widened by
-// loadCandles() to match the optimizer's full history snapshot, so the
-// trade gate's backtest runs over the same data the optimizer used to pick
-// the current params.
+// Candle buffer size. Starts at CANDLE_LIMIT and grows: loadCandles() widens it
+// to the full loaded history (optimizer snapshot + backfill, at least
+// MIN_CANDLES) and live trading widens it as each new closed candle is appended,
+// so the window keeps growing past MIN_CANDLES — up to MAX_CANDLES, after which
+// the oldest candles drop off.
 let candleBufferLimit = CANDLE_LIMIT;
 
 // ── Load strategy params ──────────────────────────────────────────────────────
@@ -52,6 +53,14 @@ async function loadParams() {
 }
 
 // ── Candle loading ────────────────────────────────────────────────────────────
+// Milliseconds per candle for an interval string like '5m', '1h', '1d', '1w'.
+function intervalToMs(interval) {
+  const m = /^(\d+)([mhdw])$/.exec(interval);
+  if (!m) throw new Error(`Unsupported interval: ${interval}`);
+  const unit = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[m[2]];
+  return parseInt(m[1], 10) * unit;
+}
+
 // Fetches every candle from `sinceMs` (inclusive) up to now, paging through
 // the exchange's per-request limit.
 async function fetchCandlesSince(exchange, interval, sinceMs) {
@@ -66,6 +75,28 @@ async function fetchCandlesSince(exchange, interval, sinceMs) {
     cursor = nextCursor;
   }
   return all;
+}
+
+// Fetches candles older than `beforeMs`, paging backward, until at least
+// `needed` are collected or the exchange has no more history to give. Both
+// exchange clients only fetch forward from a startTime, so each pass asks for
+// the CANDLE_LIMIT-wide window ending at the current earliest and keeps the
+// candles that fall before it. Returns candles in ascending time order.
+async function fetchCandlesBackTo(exchange, interval, beforeMs, needed) {
+  const granMs = intervalToMs(interval);
+  const collected = [];
+  let endMs = beforeMs; // exclusive upper bound for the next pass
+  while (collected.length < needed) {
+    const startMs = Math.max(0, endMs - CANDLE_LIMIT * granMs);
+    const batch = await exchange.fetchCandles(config.symbol, interval, CANDLE_LIMIT, startMs);
+    const older = batch.filter(c => c.time * 1000 < endMs);
+    if (!older.length) break;                 // nothing before this point
+    collected.unshift(...older);
+    const newEarliest = older[0].time * 1000;
+    if (newEarliest >= endMs) break;          // no progress — history exhausted
+    endMs = newEarliest;
+  }
+  return collected;
 }
 
 // Loads candle history the same way ftrade-bot-lenovo's historyManager does:
@@ -97,10 +128,8 @@ async function loadCandles(exchange, interval) {
     }
   }
 
-  // Widen the rolling buffer to fit the optimizer's full history so it
-  // isn't immediately truncated back down to CANDLE_LIMIT below.
-  candleBufferLimit = Math.max(CANDLE_LIMIT, base.length);
-
+  // Forward fill: fetch the gap from the last known candle up to now (or a
+  // fresh CANDLE_LIMIT window when there's no local/optimizer history yet).
   const fetched = base.length
     ? await fetchCandlesSince(exchange, interval, base[base.length - 1].time * 1000 + 1)
     : await exchange.fetchCandles(config.symbol, interval, CANDLE_LIMIT);
@@ -108,16 +137,48 @@ async function loadCandles(exchange, interval) {
   const map = new Map();
   for (const c of base)    map.set(c.time, c);
   for (const c of fetched) map.set(c.time, c);
-  const merged = [...map.values()].sort((a, b) => a.time - b.time).slice(-candleBufferLimit);
+  let merged = [...map.values()].sort((a, b) => a.time - b.time);
+
+  // Backward fill: if the buffer still holds fewer than MIN_CANDLES, keep
+  // fetching older history before the earliest candle until we reach the
+  // target (or the exchange runs out of history).
+  let backfilled = 0;
+  if (merged.length && merged.length < config.minCandles) {
+    const older = await fetchCandlesBackTo(
+      exchange, interval,
+      merged[0].time * 1000,
+      config.minCandles - merged.length,
+    );
+    backfilled = older.length;
+    for (const c of older) map.set(c.time, c);
+    merged = [...map.values()].sort((a, b) => a.time - b.time);
+  }
+
+  // Keep every candle we loaded (optimizer history, the backfill, or at least
+  // MIN_CANDLES) — the buffer grows from here, capped at MAX_CANDLES.
+  candleBufferLimit = Math.min(
+    config.maxCandles,
+    Math.max(CANDLE_LIMIT, config.minCandles, merged.length),
+  );
+  merged = merged.slice(-candleBufferLimit);
 
   historyStore.save(config.exchange, config.symbol, interval, merged);
-  console.log(`[CANDLES] ${base.length} local+optimizer + ${fetched.length} fetched → ${merged.length} total`);
+  console.log(
+    `[CANDLES] ${base.length} local+optimizer + ${fetched.length} forward` +
+    ` + ${backfilled} backward → ${merged.length} total (min ${config.minCandles})`
+  );
+  if (merged.length < config.minCandles) {
+    console.warn(
+      `[CANDLES] Only ${merged.length}/${config.minCandles} candles available —` +
+      ` exchange history for ${config.symbol} ${interval} may not go back far enough`
+    );
+  }
   return merged;
 }
 
 // ── Backtest mode ─────────────────────────────────────────────────────────────
 async function backtest(params, exchange) {
-  console.log(`\n[BACKTEST] ${config.symbol} ${params.interval}  last ${CANDLE_LIMIT} candles`);
+  console.log(`\n[BACKTEST] ${config.symbol} ${params.interval}  min ${config.minCandles} candles`);
   console.log(`  fast=${params.fastMA} slow=${params.slowMA} rsiP=${params.rsiPeriod} rsiTh=${params.rsiThreshold}`);
   console.log(`  sl=${params.stopLossPercent}% tp=${params.takeProfitPercent}% trail=${params.trailingPercent}% fee=${params.tradeFee}%\n`);
 
@@ -125,10 +186,13 @@ async function backtest(params, exchange) {
   const { trades, summary: s } = runBacktest(candles, params);
 
   console.log('── Summary ────────────────────────────────────────');
+  console.log(`  Candles  : ${s.candleLength}`);
   console.log(`  Trades   : ${s.total} (${s.wins}W / ${s.losses}L)  WinRate: ${s.winRate}%`);
   console.log(`  PnL      : ${s.totalPnl}%  MaxDD: ${s.maxDD}%`);
+  console.log(`  ROA      : ${s.annualReturn}%/yr`);
   console.log(`  Capital  : $100 → $${s.finalCapital}`);
   console.log('───────────────────────────────────────────────────');
+  saveBacktestToEnv(s);
 
   if (trades.length) {
     console.log('\nTrade log:');
@@ -152,16 +216,19 @@ async function backtest(params, exchange) {
 }
 
 // ── Backtest trade gate ────────────────────────────────────────────────────────
-// Runs a backtest with the current candles/params and compares the total PnL%
-// against MIN_ALLOW_PERCENT. Used on startup and after every param reload to
-// decide whether the bot is allowed to open new trades.
+// Runs a backtest with the current candles/params and compares the annualized
+// return (ROA) against MIN_ALLOW_PERCENT. Saves the full result to .env and is
+// used on startup and after every param reload to decide whether the bot is
+// allowed to open new trades.
 function checkTradeGate(candles, params) {
   const { summary } = runBacktest(candles, params);
-  const allowed = summary.totalPnl >= config.minAllowPercent;
+  saveBacktestToEnv(summary);
+  const allowed = summary.annualReturn >= config.minAllowPercent;
+  const detail = `ROA ${summary.annualReturn}%/yr (${summary.candleLength} candles, PnL ${summary.totalPnl}%)`;
   if (allowed) {
-    console.log(`[GATE] Backtest PnL ${summary.totalPnl}% >= MIN_ALLOW_PERCENT ${config.minAllowPercent}% — trading enabled`);
+    console.log(`[GATE] Backtest ${detail} >= MIN_ALLOW_PERCENT ${config.minAllowPercent}% — trading enabled`);
   } else {
-    console.warn(`[GATE] Backtest PnL ${summary.totalPnl}% < MIN_ALLOW_PERCENT ${config.minAllowPercent}% — new trades halted until next reload`);
+    console.warn(`[GATE] Backtest ${detail} < MIN_ALLOW_PERCENT ${config.minAllowPercent}% — new trades halted until next reload`);
   }
   return allowed;
 }
@@ -312,7 +379,8 @@ async function liveTrade(params, exchange) {
       candles[candles.length - 1] = candle;
     } else {
       candles.push(candle);
-      if (candles.length > candleBufferLimit) candles = candles.slice(-candleBufferLimit);
+      if (candles.length > config.maxCandles) candles = candles.slice(-config.maxCandles);
+      candleBufferLimit = candles.length;
     }
     historyStore.save(config.exchange, config.symbol, params.interval, candles);
 

@@ -13,10 +13,20 @@ module.exports = {
   tradeCapital: parseFloat(process.env.TRADE_CAPITAL || '100'),
   tradePercent: parseFloat(process.env.TRADE_PERCENT || '0'),
 
-  // Minimum backtest PnL% (over the loaded candle history) required for the
-  // bot to place new trades with the current params. Checked on startup and
-  // after every param reload (optimizer 24h refresh / midnight restart).
-  minAllowPercent: parseFloat(process.env.MIN_ALLOW_PERCENT || '10'),
+  // Minimum backtest annualized return (ROA %, over the loaded candle history)
+  // required for the bot to place new trades with the current params. Checked on
+  // startup and after every param reload (optimizer 24h refresh / midnight restart).
+  minAllowPercent: parseFloat(process.env.MIN_ALLOW_PERCENT || '500'),
+
+  // Minimum number of historical candles to load before backtesting or live
+  // trading. loadCandles() fills the buffer both backward (older history) and
+  // forward (up to now) until it holds at least this many candles.
+  minCandles: parseInt(process.env.MIN_CANDLES || '3000'),
+
+  // Maximum candles kept in the rolling buffer. The window grows past
+  // MIN_CANDLES as new candles arrive but is capped here — the oldest candles
+  // drop off once the buffer reaches this size.
+  maxCandles: parseInt(process.env.MAX_CANDLES || '10000'),
 
   // When true, refuse to start if the API key can withdraw funds (see the
   // startup [KEYCHECK]). Otherwise such issues are warnings only.
