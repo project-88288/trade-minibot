@@ -82,10 +82,16 @@ function runBacktest(candles, params) {
 
   trades.sort((a, b) => new Date(a.exitTime) - new Date(b.exitTime));
 
-  let capital = 100, peak = 100, maxDD = 0, wins = 0, losses = 0, totalPnl = 0;
+  // Fees are tracked in dollar terms against the compounding $100 account:
+  // each trade's round-trip fee (fee2 percent) is charged on the capital
+  // deployed at that point, so the total reflects real cost as the account grows.
+  let capital = 100, peak = 100, maxDD = 0, wins = 0, losses = 0, totalPnl = 0, totalFee = 0;
   for (const t of trades) {
     if (t.netPnl >= 0) wins++; else losses++;
     totalPnl += t.netPnl;
+    const feeUsd = capital * fee2 / 100;
+    totalFee += feeUsd;
+    t.fee     = Math.round(feeUsd * 100) / 100;
     capital  *= (1 + t.netPnl / 100);
     if (capital > peak) peak = capital;
     const dd = (peak - capital) / peak * 100;
@@ -111,10 +117,13 @@ function runBacktest(candles, params) {
     summary: {
       candleLength,
       total:        trades.length,
+      winTrades:    wins,
+      lossTrades:   losses,
       wins,
       losses,
       winRate:      trades.length > 0 ? Math.round(wins / trades.length * 1000) / 10 : 0,
       totalPnl:     Math.round(totalPnl * 100) / 100,
+      totalFee:     Math.round(totalFee * 100) / 100,
       maxDD:        Math.round(maxDD * 10) / 10,
       finalCapital: Math.round(capital * 100) / 100,
       annualReturn: Math.round(annualReturn * 100) / 100,

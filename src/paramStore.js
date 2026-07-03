@@ -25,10 +25,13 @@ const BACKTEST_MAP = {
   candleLength: 'BACKTEST_CANDLE_LENGTH',
   annualReturn: 'BACKTEST_ANNUAL_RETURN',
   totalPnl:     'BACKTEST_TOTAL_PNL',
+  totalFee:     'BACKTEST_TOTAL_FEE',
   winRate:      'BACKTEST_WIN_RATE',
   maxDD:        'BACKTEST_MAX_DD',
   finalCapital: 'BACKTEST_FINAL_CAPITAL',
   total:        'BACKTEST_TRADES',
+  winTrades:    'BACKTEST_WIN_TRADES',
+  lossTrades:   'BACKTEST_LOSS_TRADES',
   at:           'BACKTEST_AT',
 };
 
