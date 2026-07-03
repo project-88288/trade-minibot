@@ -92,9 +92,24 @@ function runBacktest(candles, params) {
     if (dd > maxDD) maxDD = dd;
   }
 
+  // Candle length (how much history the result covers) and the return on annual
+  // (ROA): the compound annualized growth of the $100 → finalCapital over the
+  // real time span the candles cover, so results across different history
+  // lengths/intervals are comparable and the trade gate can require a minimum
+  // yearly return. Zero when there's too little history or no surviving capital.
+  const candleLength = candles.length;
+  const spanMs = candleLength > 1
+    ? (candles[candleLength - 1].time - candles[0].time) * 1000
+    : 0;
+  const years  = spanMs / (365.25 * 24 * 60 * 60 * 1000);
+  const annualReturn = (years > 0 && capital > 0)
+    ? (Math.pow(capital / 100, 1 / years) - 1) * 100
+    : 0;
+
   return {
     trades,
     summary: {
+      candleLength,
       total:        trades.length,
       wins,
       losses,
@@ -102,6 +117,7 @@ function runBacktest(candles, params) {
       totalPnl:     Math.round(totalPnl * 100) / 100,
       maxDD:        Math.round(maxDD * 10) / 10,
       finalCapital: Math.round(capital * 100) / 100,
+      annualReturn: Math.round(annualReturn * 100) / 100,
     },
   };
 }

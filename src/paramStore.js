@@ -18,29 +18,46 @@ const PARAM_MAP = {
   tradeFee:          'TRADE_FEE',
 };
 
-// Coerces an optimizer-sourced param into a safe .env value. Params come from
-// a remote service, so a compromised/spoofed optimizer must not be able to
-// inject extra .env lines (e.g. a value containing a newline overwriting
-// BINANCE_API_SECRET). Numbers pass through; `interval` must match a simple
-// timeframe pattern; anything else is rejected.
+// Backtest-result keys written to .env after every gate/backtest run, so the
+// latest result is inspectable and survives a restart. All are locally computed
+// numbers except `at`, an ISO timestamp of when the backtest ran.
+const BACKTEST_MAP = {
+  candleLength: 'BACKTEST_CANDLE_LENGTH',
+  annualReturn: 'BACKTEST_ANNUAL_RETURN',
+  totalPnl:     'BACKTEST_TOTAL_PNL',
+  winRate:      'BACKTEST_WIN_RATE',
+  maxDD:        'BACKTEST_MAX_DD',
+  finalCapital: 'BACKTEST_FINAL_CAPITAL',
+  total:        'BACKTEST_TRADES',
+  at:           'BACKTEST_AT',
+};
+
+// Coerces a value into a safe .env value. Optimizer params come from a remote
+// service, so a compromised/spoofed optimizer must not be able to inject extra
+// .env lines (e.g. a value containing a newline overwriting BINANCE_API_SECRET).
+// Numbers pass through; `interval` must match a simple timeframe pattern; `at`
+// must match an ISO-8601 timestamp; anything else is rejected.
 function sanitizeValue(key, value) {
   if (key === 'interval') {
     return /^[0-9]+[smhdwM]$/.test(value) ? String(value) : null;
+  }
+  if (key === 'at') {
+    return /^[0-9T:.\-]+Z$/.test(value) ? String(value) : null;
   }
   const n = Number(value);
   return Number.isFinite(n) ? String(n) : null;
 }
 
-// Writes optimizer-sourced strategy params back into .env so they survive a
-// restart even when the optimizer is temporarily unreachable.
-function saveParamsToEnv(params) {
+// Upserts each key of `values` into .env using its mapped env-var name,
+// skipping null/undefined and any value that fails sanitization.
+function writeEnvVars(map, values, label) {
   let text = fs.readFileSync(ENV_PATH, 'utf8');
 
-  for (const [key, envVar] of Object.entries(PARAM_MAP)) {
-    if (params[key] == null) continue;
-    const value = sanitizeValue(key, params[key]);
+  for (const [key, envVar] of Object.entries(map)) {
+    if (values[key] == null) continue;
+    const value = sanitizeValue(key, values[key]);
     if (value == null) {
-      console.warn(`[PARAMS] Ignoring unsafe value for ${envVar}: ${JSON.stringify(params[key])}`);
+      console.warn(`[${label}] Ignoring unsafe value for ${envVar}: ${JSON.stringify(values[key])}`);
       continue;
     }
     const re = new RegExp(`^(${envVar}=).*$`, 'm');
@@ -54,7 +71,20 @@ function saveParamsToEnv(params) {
   }
 
   fs.writeFileSync(ENV_PATH, text, 'utf8');
+}
+
+// Writes optimizer-sourced strategy params back into .env so they survive a
+// restart even when the optimizer is temporarily unreachable.
+function saveParamsToEnv(params) {
+  writeEnvVars(PARAM_MAP, params, 'PARAMS');
   console.log('[PARAMS] Optimizer params saved to .env as fallback backup');
 }
 
-module.exports = { saveParamsToEnv };
+// Writes the latest backtest summary (candle length, annualized return / ROA,
+// PnL, win rate, drawdown, final capital, trade count) into .env.
+function saveBacktestToEnv(summary) {
+  writeEnvVars(BACKTEST_MAP, { ...summary, at: new Date().toISOString() }, 'BACKTEST');
+  console.log('[BACKTEST] Result saved to .env');
+}
+
+module.exports = { saveParamsToEnv, saveBacktestToEnv };
