@@ -36,6 +36,10 @@ module.exports = {
   optimizerKey: process.env.OPTIMIZER_KEY || '',
   exchange:     process.env.EXCHANGE       || 'binance',
 
+  // Notify-server sink — when set, every console log is also POSTed to
+  // ${NOTIFY_URL}/notify. Leave blank to disable forwarding.
+  notifyUrl: process.env.NOTIFY_URL || '',
+
   // KuCoin Futures credentials (only used when EXCHANGE=kucoin)
   kucoinApiKey:        process.env.KUCOIN_API_KEY        || '',
   kucoinApiSecret:     process.env.KUCOIN_API_SECRET     || '',

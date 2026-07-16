@@ -3,6 +3,11 @@
 require('dotenv').config();
 
 const config                  = require('./config');
+
+// Mirror all console output to the notify-server before anything else logs.
+const { symbol } = config;
+require('./src/notifyLogger').install(config.notifyUrl, `ftrade-bot:${symbol}`);
+
 const { BinanceClient }       = require('./src/exchange');
 const { KuCoinClient }        = require('./src/kucoinExchange');
 const { Trader }              = require('./src/trader');
@@ -15,6 +20,7 @@ const { saveParamsToEnv, saveBacktestToEnv } = require('./src/paramStore');
 
 const BACKTEST_MODE     = process.argv.includes('--backtest');
 const CANDLE_LIMIT      = 1500;
+const MAX_CANDLE        = 3300;
 const PARAM_REFRESH_MS  = 24 * 60 * 60 * 1000; // 24 hours
 
 // Candle buffer size. Starts at CANDLE_LIMIT and grows: loadCandles() widens it
@@ -327,7 +333,9 @@ async function liveTrade(params, exchange) {
   console.log(`[BOT] Live trading ${config.symbol} ${params.interval}  futures=${config.futuresMode}`);
 
   let candles = await loadCandles(exchange, params.interval);
-  console.log(`[BOT] Loaded ${candles.length} historical candles`);
+  const loadedCount = candles.length;
+  candles = candles.slice(-MAX_CANDLE);
+  console.log(`[BOT] Loaded ${loadedCount} historical candles, trimmed to ${candles.length}/${MAX_CANDLE}`);
 
   const trader = new Trader({
     exchange,
